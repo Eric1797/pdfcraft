@@ -92,15 +92,15 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     // live at the bar's right end (#6, revisioned).
                     #[cfg(target_os = "windows")]
                     {
-                        if icons::button(ui, "minus", 28.0, false, &tl!("Minimize")).clicked() {
+                        if icons::button(ui, "minus", 28.0, false, tl!("Minimize")).clicked() {
                             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                         }
                         let maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
                         let (glyph, tip) = if maximized { ("copy", tl!("Restore")) } else { ("square", tl!("Maximize")) };
-                        if icons::button(ui, glyph, 28.0, false, &tip).clicked() {
+                        if icons::button(ui, glyph, 28.0, false, tip).clicked() {
                             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
                         }
-                        if icons::button(ui, "x", 28.0, false, &tl!("Close")).clicked() {
+                        if icons::button(ui, "x", 28.0, false, tl!("Close")).clicked() {
                             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                     }
@@ -522,8 +522,8 @@ pub fn resize_edges(app: &mut PdfCraftApp, ctx: &egui::Context) {
             app.window_resize = None;
             return;
         }
-        let (pos, rect) = ctx.input(|i| (i.pointer.hover_pos(), i.viewport().inner_rect));
-        if let (Some(pos), Some(rect)) = (pos, rect) {
+        let (pos, _) = ctx.input(|i| (i.pointer.hover_pos(), i.viewport().inner_rect));
+        if let Some(pos) = pos {
             let next = resize_rect(drag.start, drag.edge, pos - drag.origin, vec2(820.0, 520.0));
             if next != drag.sent {
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(next.size()));
