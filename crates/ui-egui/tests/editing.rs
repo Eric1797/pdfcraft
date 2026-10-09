@@ -643,6 +643,43 @@ fn combine_paths_from_the_shell_stage_in_order() {
 }
 
 #[test]
+fn combine_grid_lists_cards_and_opens_preview() {
+    let mut h = harness(1, |app| {
+        app.use_files(
+            pdfcraft_ui_egui::FilePurpose::Combine,
+            vec![("one.pdf".into(), fixture(2)), ("two.pdf".into(), fixture(1)), ("secret.pdf".into(), protected("pw", "owner", -1))],
+        );
+    });
+    h.run_steps(3);
+    h.state_mut().combine_columns.grid = true;
+    h.run_steps(3);
+    // Readable files render thumbs; the locked one shows its lock instead.
+    assert_eq!(h.state().combine_thumbs.len(), 2);
+    h.get_by_label("one.pdf").click();
+    h.run_steps(3);
+    let app = h.state();
+    let id = app.combine_draft[0].id;
+    assert_eq!(app.combine_preview, Some(id), "clicking a card previews it");
+    assert_eq!(app.combine_selection(), vec![0], "and selects it");
+    // The dialog titles the file; closing it keeps the selection.
+    assert!(h.get_all_by_label("one.pdf").count() >= 2, "card and dialog title");
+    h.get_by_label("Close").click();
+    h.run_steps(2);
+    assert_eq!(h.state().combine_preview, None);
+    assert_eq!(h.state().combine_selection(), vec![0]);
+}
+
+#[test]
+fn combine_grid_view_persists() {
+    let mut h = harness(1, |_| {});
+    h.state_mut().combine_columns.grid = true;
+    let saved = h.state().persist();
+    let mut restored = harness(1, |_| {});
+    restored.state_mut().restore(&saved);
+    assert!(restored.state().combine_columns.grid);
+}
+
+#[test]
 fn combine_lists_size_and_warns_before_combining() {
     let mut h = harness(1, |app| {
         app.use_files(

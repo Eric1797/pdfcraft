@@ -28,10 +28,11 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     app.active = None;
                     app.combine_tab.focused = false;
                 }
-                // Reserve exactly what the right-side controls took last frame, so tabs never
-                // slide under the icons at any font scale or window width (first frame estimates).
+                // Reserve exactly what the fixed controls (Open button, right-side icons)
+                // took last frame, so tabs never slide under them at any font scale or
+                // window width (first frame estimates).
                 let reserve_id = ui.id().with("tab-reserve");
-                let fallback = ui.fonts_mut(|f| f.layout_no_wrap("Discord".into(), theme::medium(13.0), t.text).size().x) + 106.0;
+                let fallback = if cfg!(target_os = "windows") { 250.0 } else { 152.0 };
                 let reserve = ui.data_mut(|data| data.get_temp::<f32>(reserve_id)).unwrap_or(fallback);
                 // Tabs scroll horizontally when more are open than fit (wheel included); the
                 // active tab scrolls into view whenever the selection changes.
@@ -80,28 +81,31 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                                     }
                                 }
                                 ui.add_space(4.0);
-                                if widgets::ghost_button(ui, "plus", tl!("Open")).on_hover_text(tl!("Open a PDF (⌘O)")).clicked() {
-                                    app.open_dialog();
-                                }
                             });
                         });
                 });
+                // The Open button stays fixed after the tabs (always reachable without
+                // scrolling to the very end), then the right-side icons.
+                ui.add_space(4.0);
+                if widgets::ghost_button(ui, "plus", tl!("Open")).on_hover_text(tl!("Open a PDF (⌘O)")).clicked() {
+                    app.open_dialog();
+                }
                 let before = ui.available_width();
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     // Windows draws no native title bar: minimize, maximize/restore and close
-                    // live at the bar's right end (#6, revisioned).
+                    // live at the bar's right end (#6, revisioned). First added is rightmost.
                     #[cfg(target_os = "windows")]
                     {
-                        if icons::button(ui, "minus", 28.0, false, tl!("Minimize")).clicked() {
-                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        if icons::button(ui, "x", 28.0, false, tl!("Close")).clicked() {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                         let maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
                         let (glyph, tip) = if maximized { ("copy", tl!("Restore")) } else { ("square", tl!("Maximize")) };
                         if icons::button(ui, glyph, 28.0, false, tip).clicked() {
                             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
                         }
-                        if icons::button(ui, "x", 28.0, false, tl!("Close")).clicked() {
-                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        if icons::button(ui, "minus", 28.0, false, tl!("Minimize")).clicked() {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                         }
                     }
                     let (icon, label) = match app.theme_preference {
@@ -114,10 +118,6 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     egui::Popup::menu(&response).show(|ui| theme_menu(app, ui));
                     if icons::button(ui, "circle-help", 28.0, false, tl!("Keyboard shortcuts")).clicked() {
                         app.dialog = Some(Dialog::Shortcuts);
-                    }
-                    // One click to the community, from anywhere in the app.
-                    if widgets::ghost_button(ui, "messages-square", "Discord").on_hover_text(pdfcraft_engine::links::DISCORD).clicked() {
-                        app.execute("help.discord");
                     }
                 });
                 ui.data_mut(|data| data.insert_temp(reserve_id, (before - ui.available_width()).max(0.0) + 4.0));

@@ -2049,3 +2049,14 @@
 	Minimize	Minimize
 	Maximize	Maximize
 	Restore	Restore
+
+# Customize program (Preferences): English until translated.
+	Customize program	Customize program
+	App name	App name
+	Window and taskbar title; empty keeps PdfCraft.	Window and taskbar title; empty keeps PdfCraft.
+	App icon	App icon
+	Choose PNG…	Choose PNG…
+	Built-in icon	Built-in icon
+
+# Combine grid view: English until translated.
+	Grid	Grid

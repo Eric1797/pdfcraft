@@ -65,6 +65,23 @@ fn window_buttons_sit_in_the_tab_strip() {
     }
 }
 
+/// Preferences ▸ Customize program renames the window (and persists the choice).
+#[test]
+fn custom_name_reaches_the_window_title_and_persists() {
+    let mut h = harness(|_| {});
+    h.state_mut().execute("app.preferences");
+    h.run_steps(2);
+    assert!(h.query_all_by_label("App name").count() >= 1, "customize program section shows");
+    h.state_mut().custom_name = "My PDFs".into();
+    h.run_steps(2);
+    assert!(h.state().window_title.starts_with("My PDFs"), "window title: {}", h.state().window_title);
+    let saved = h.state().persist();
+    assert!(saved.contains("My PDFs"));
+    let mut restored = harness(|_| {});
+    restored.state_mut().restore(&saved);
+    assert_eq!(restored.state().custom_name, "My PDFs");
+}
+
 #[test]
 fn every_catalog_tool_is_listed_after_view_more() {
     let mut h = harness(|_| {});

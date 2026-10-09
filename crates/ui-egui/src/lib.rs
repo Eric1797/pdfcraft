@@ -89,6 +89,10 @@ pub mod i18n;
 
 /// The longest author name kept (Preferences ▸ Identity, restored settings).
 pub(crate) const MAX_AUTHOR_CHARS: usize = 200;
+/// Longest custom program name kept (Preferences ▸ Customize program).
+pub(crate) const MAX_CUSTOM_NAME_CHARS: usize = 64;
+/// Longest custom icon path kept (a file path, never the image itself).
+pub(crate) const MAX_ICON_PATH_CHARS: usize = 1024;
 pub mod portable;
 mod protect;
 mod recovery;
@@ -368,6 +372,12 @@ pub struct PdfCraftApp {
     pub theme_preference: ThemePreference,
     /// Interface language preference: `auto` (follow the system) or a code from [`i18n::LANGUAGES`].
     pub language: String,
+    /// Customize program: window and taskbar title override (empty keeps PdfCraft).
+    pub custom_name: String,
+    /// Customize program: PNG file used for the window and taskbar icon (None keeps built-in).
+    pub custom_icon_path: Option<String>,
+    /// Which icon path was last attempted, so a missing file notifies once, not every frame.
+    pub(crate) custom_icon_applied: Option<String>,
     pub dialog: Option<Dialog>,
     /// How to ask for the latest release (the desktop app sets it; see `updates`).
     pub update_source: Option<updates::UpdateSource>,
@@ -451,6 +461,12 @@ pub struct PdfCraftApp {
     pub space_audit: Vec<pdfcraft_engine::optimize::SpaceUse>,
     /// Combine files: the files staged so far.
     pub combine_draft: Vec<combine_ui::CombineFile>,
+    /// Combine files: first-page thumbnails by file id (grid view).
+    pub combine_thumbs: std::collections::HashMap<u64, egui::TextureHandle>,
+    /// Combine files: the file being previewed from the grid, if any.
+    pub combine_preview: Option<u64>,
+    /// The preview's rendered page: file id, texture and height/width aspect.
+    pub combine_preview_tex: Option<(u64, egui::TextureHandle, f32)>,
     /// The Combine files tab: whether it is open, shown, its selection and undo history.
     pub combine_tab: combine_ui::CombineTab,
     /// The Combine files table's column order and widths (kept in the settings).
@@ -616,6 +632,9 @@ impl PdfCraftApp {
             theme: ThemeKind::Light,
             theme_preference: ThemePreference::Light,
             language: i18n::AUTO.to_string(),
+            custom_name: String::new(),
+            custom_icon_path: None,
+            custom_icon_applied: None,
             dialog: None,
             update_source: None,
             updates: updates::Updates::default(),
@@ -669,6 +688,9 @@ impl PdfCraftApp {
             cert_viewer: None,
             space_audit: Vec::new(),
             combine_draft: Vec::new(),
+            combine_thumbs: Default::default(),
+            combine_preview: None,
+            combine_preview_tex: None,
             combine_tab: Default::default(),
             combine_columns: Default::default(),
             image_import: None,
@@ -1206,6 +1228,8 @@ impl PdfCraftApp {
             "default_zoom": self.view_defaults.zoom_name(),
             "highlight_fields": self.view_defaults.highlight_fields,
             "language": self.language,
+            "custom_name": self.custom_name.trim().chars().take(MAX_CUSTOM_NAME_CHARS).collect::<String>(),
+            "custom_icon": self.custom_icon_path,
             "author": self.comment_prefs.author,
             // Drawn signatures keep their original form (older settings read the same).
             "signature": match &self.signature { Some(fill_sign::SavedSig::Drawn(s)) => Some(s), _ => None },
@@ -1251,6 +1275,12 @@ impl PdfCraftApp {
         }
         if let Some(language) = v["language"].as_str().and_then(i18n::normalize_pref) {
             self.language = language.to_string();
+        }
+        if let Some(name) = v["custom_name"].as_str().map(str::trim).filter(|n| !n.is_empty()) {
+            self.custom_name = name.chars().take(MAX_CUSTOM_NAME_CHARS).collect();
+        }
+        if let Some(path) = v["custom_icon"].as_str().map(str::trim).filter(|p| !p.is_empty()) {
+            self.custom_icon_path = Some(path.chars().take(MAX_ICON_PATH_CHARS).collect());
         }
         // An empty or missing name keeps the login-name default; settings are untrusted, so the
         // name is cut to a sane length.
@@ -1668,6 +1698,9 @@ impl eframe::App for PdfCraftApp {
                 self.stage_handoff(request);
             }
         }
+        // Customize program: a changed icon path takes effect (or reports why not).
+        #[cfg(not(target_arch = "wasm32"))]
+        self.apply_custom_icon(ctx);
         self.guard_quit(ctx);
         let now = ctx.input(|i| i.time);
         self.autosave_tick(now);
@@ -1721,12 +1754,15 @@ impl eframe::App for PdfCraftApp {
             return;
         }
         // The window shows the active document's name (or title, if it asks for that).
+        // Customize program: the window and taskbar title (empty keeps PdfCraft).
+        let brand = self.custom_name.trim();
+        let brand = if brand.is_empty() { "PdfCraft".to_owned() } else { brand.chars().take(MAX_CUSTOM_NAME_CHARS).collect::<String>() };
         let title = self
             .active
             .and_then(|i| self.session.get(self.views[i].id))
             .map(|d| d.display_name())
             .or_else(|| self.combine_showing().then(|| tl!("Combine files").to_owned()))
-            .map_or_else(|| "PdfCraft".to_owned(), |name| format!("{name} — PdfCraft"));
+            .map_or_else(|| brand.clone(), |name| format!("{name} — {brand}"));
         if title != self.window_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.window_title = title;

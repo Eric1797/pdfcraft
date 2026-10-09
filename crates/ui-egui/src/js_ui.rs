@@ -304,6 +304,29 @@ pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
             .labelled_by(label.id);
     });
     ui.add_space(8.0);
+    ui.label(egui::RichText::new(tl!("Customize program")).font(theme::semibold(13.0)));
+    ui.horizontal(|ui| {
+        let label = ui.label(tl!("App name"));
+        ui.add(egui::TextEdit::singleline(&mut app.custom_name).desired_width(220.0).char_limit(crate::MAX_CUSTOM_NAME_CHARS)).labelled_by(label.id);
+    });
+    ui.label(egui::RichText::new(tl!("Window and taskbar title; empty keeps PdfCraft.")).small().color(t.text_muted));
+    ui.horizontal(|ui| {
+        ui.label(tl!("App icon"));
+        #[cfg(not(target_arch = "wasm32"))]
+        if ui.button(tl!("Choose PNG…")).clicked() {
+            let dialog = rfd::AsyncFileDialog::new().add_filter("PNG image", &["png"]);
+            app.ask_one(crate::pickers::Ask::File(dialog), None, |app, path| app.set_custom_icon(path));
+        }
+        if ui.button(tl!("Default")).clicked() {
+            app.custom_icon_path = None;
+        }
+        let status = match app.custom_icon_path.as_deref().and_then(|p| std::path::Path::new(p).file_name()) {
+            Some(name) => name.to_string_lossy().into_owned(),
+            None => tl!("Built-in icon").to_string(),
+        };
+        ui.label(status);
+    });
+    ui.add_space(8.0);
     ui.label(egui::RichText::new("JavaScript").font(theme::semibold(13.0)));
     egui::Frame::new().fill(t.hover).corner_radius(egui::CornerRadius::same(6)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
         ui.set_width(ui.available_width());
@@ -319,4 +342,92 @@ pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
     });
     ui.add_space(10.0);
     buttons(ui, tl!("OK"), &[]).is_some()
+}
+
+/// Largest icon file accepted (icons are tiny; anything bigger is a mistake).
+const MAX_ICON_BYTES: usize = 1024 * 1024;
+/// Largest icon dimension in pixels (Windows icons top out at 256).
+const MAX_ICON_DIM: u32 = 512;
+
+/// Check PNG bytes far enough to trust decoding them: PNG signature plus IHDR
+/// dimensions within bounds, so a corrupt or hostile file cannot make the decoder
+/// allocate blindly. Decoding itself can still fail; handled where it is used.
+fn icon_png_dims(png: &[u8]) -> Result<(u32, u32), String> {
+    if png.len() > MAX_ICON_BYTES {
+        return Err(format!("larger than {} KiB", MAX_ICON_BYTES / 1024));
+    }
+    let head = png.get(..24).ok_or_else(|| "not a PNG image".to_string())?;
+    if head.get(..8) != Some(b"\x89PNG\r\n\x1a\n".as_slice()) || head.get(12..16) != Some(b"IHDR".as_slice()) {
+        return Err("not a PNG image".to_string());
+    }
+    let dim = |range: std::ops::Range<usize>| {
+        head.get(range).and_then(|b| <[u8; 4]>::try_from(b).ok()).map(u32::from_be_bytes).filter(|d| (1..=MAX_ICON_DIM).contains(d))
+    };
+    match (dim(16..20), dim(20..24)) {
+        (Some(w), Some(h)) => Ok((w, h)),
+        _ => Err("unsupported image size".to_string()),
+    }
+}
+
+impl PdfCraftApp {
+    /// Take a picked PNG file as the window and taskbar icon (desktop only).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn set_custom_icon(&mut self, path: std::path::PathBuf) {
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        match std::fs::read(&path) {
+            Ok(bytes) => match icon_png_dims(&bytes) {
+                Ok(_) => {
+                    self.custom_icon_path = Some(path.to_string_lossy().into_owned());
+                }
+                Err(e) => self.notify_fmt("Couldn't use {name}: {e}", &[("name", &name), ("e", &e)]),
+            },
+            Err(e) => self.notify_fmt("Couldn't read {name}: {e}", &[("name", &name), ("e", &e.to_string())]),
+        }
+    }
+
+    /// Apply a changed custom icon (Preferences ▸ Customize program): decode and send
+    /// it as the window and taskbar icon, or say why it cannot be used. Runs when the
+    /// path changes; a missing file falls back to the built-in icon.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn apply_custom_icon(&mut self, ctx: &egui::Context) {
+        if self.custom_icon_applied == self.custom_icon_path {
+            return;
+        }
+        self.custom_icon_applied.clone_from(&self.custom_icon_path);
+        let Some(path) = self.custom_icon_path.clone() else { return };
+        let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let bytes = std::fs::read(&path).unwrap_or_default();
+        match icon_png_dims(&bytes).ok().and_then(|_| eframe::icon_data::from_png_bytes(&bytes).ok()) {
+            Some(icon) => ctx.send_viewport_cmd(egui::ViewportCommand::Icon(Some(std::sync::Arc::new(icon)))),
+            None => self.notify_fmt("Couldn't use {name} as the app icon", &[("name", &name)]),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A PNG header with the given IHDR dimensions (the validator reads this far only).
+    fn png_head(width: u32, height: u32) -> Vec<u8> {
+        let mut head = b"\x89PNG\r\n\x1a\n".to_vec();
+        head.extend_from_slice(&13u32.to_be_bytes());
+        head.extend_from_slice(b"IHDR");
+        head.extend_from_slice(&width.to_be_bytes());
+        head.extend_from_slice(&height.to_be_bytes());
+        head
+    }
+
+    #[test]
+    fn icon_dims_accept_a_sane_png() {
+        assert_eq!(icon_png_dims(&png_head(64, 64)), Ok((64, 64)));
+    }
+
+    #[test]
+    fn icon_dims_reject_garbage_and_absurd_sizes() {
+        assert!(icon_png_dims(b"hello").is_err(), "not a PNG");
+        assert!(icon_png_dims(&png_head(0, 64)).is_err(), "empty dimension");
+        assert!(icon_png_dims(&png_head(10_000, 10)).is_err(), "oversized dimension");
+        assert!(icon_png_dims(&vec![0u8; MAX_ICON_BYTES + 1]).is_err(), "oversized file");
+    }
 }
