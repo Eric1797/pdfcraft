@@ -181,6 +181,21 @@ fn main() -> eframe::Result {
         }
     }
     let persistence_path = settings_dir().map(|d| d.join("app.ron"));
+    // Single-instance handoff (#367): when another PdfCraft is running and this launch
+    // carries files, it hands them over and exits quietly, so an Explorer multi-select
+    // lands in one window however Explorer invoked it. A `--control` launch always owns
+    // its window (its driver expects this exact process to answer).
+    let handoff_request = pdfcraft_ui_egui::single_instance::HandoffRequest { files: files.clone(), combine, create_images };
+    let handoff = match &control_file {
+        Some(_) => None,
+        None => match settings_dir() {
+            None => None,
+            Some(dir) => match pdfcraft_ui_egui::single_instance::claim(&dir, &handoff_request) {
+                pdfcraft_ui_egui::single_instance::Claim::Forwarded => return Ok(()),
+                pdfcraft_ui_egui::single_instance::Claim::Primary(h) => h,
+            },
+        },
+    };
     let mut native = eframe::NativeOptions { viewport, persistence_path, ..Default::default() };
     configure_gpu(&mut native);
     // Finder, Open With and the Dock deliver files as Apple events, not arguments; catch the one
@@ -200,6 +215,7 @@ fn main() -> eframe::Result {
             app.integrated_titlebar = integrated;
             app.update_source = Some(std::sync::Arc::new(updates::latest_release));
             app.os_key_store_ids = cfg!(any(target_os = "macos", target_os = "windows"));
+            app.handoff = handoff;
             #[cfg(target_os = "macos")]
             {
                 app.os_events = Some(apple_events.connect(&cc.egui_ctx));
