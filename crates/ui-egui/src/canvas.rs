@@ -237,6 +237,8 @@ pub struct DocView {
     viewport_screen: Rect,
     /// Pending zoom anchor: page, position within it (0..1), and offset from the viewport corner.
     zoom_anchor: Option<(usize, f32, f32, Vec2)>,
+    /// A zoom step gliding toward its target (buttons, keys, menu); `None` at rest.
+    zoom_anim: Option<ZoomAnim>,
     /// Turns wheel input into page turns in single-page view.
     wheel: crate::wheel_pager::WheelPager,
     pub(crate) auto_scroll: crate::autoscroll::AutoScroll,
@@ -311,6 +313,18 @@ pub enum ViewAction {
     PastePages,
 }
 
+/// A zoom step gliding toward its target; `t0` starts on the first advance.
+/// Kept beside `zoom` (not in it) so a new step retargets mid-flight smoothly.
+#[derive(Clone, Copy, Debug)]
+struct ZoomAnim {
+    from: f32,
+    to: f32,
+    t0: Option<f64>,
+}
+
+/// Seconds a zoom step glides.
+const ZOOM_GLIDE_SECS: f64 = 0.14;
+
 impl DocView {
     /// Where `page` is drawn on screen this frame (`None` when it is not on screen).
     pub fn page_screen_rect(&self, page: usize) -> Option<Rect> {
@@ -375,6 +389,7 @@ impl DocView {
             screen_xforms: Vec::new(),
             viewport_screen: Rect::NOTHING,
             zoom_anchor: None,
+            zoom_anim: None,
             wheel: Default::default(),
             auto_scroll: Default::default(),
             selected: BTreeSet::new(),
@@ -839,8 +854,34 @@ impl DocView {
         let z = self.zoom;
         let next = if up { STEPS.iter().copied().find(|s| *s > z * 1.01) } else { STEPS.iter().rev().copied().find(|s| *s < z * 0.99) };
         if let Some(n) = next {
-            self.set_zoom(n);
+            // Glide there over a few frames instead of jumping, keeping the viewport
+            // centre still on every frame of the flight (see advance_zoom).
+            self.zoom_anim = Some(ZoomAnim { from: z, to: n, t0: None });
+            self.fit = Fit::None;
         }
+    }
+
+    /// Glide an in-flight zoom step toward its target; true while still flying (the
+    /// caller repaints). Pure in time, so tests drive it with explicit stamps.
+    pub(crate) fn advance_zoom(&mut self, now: f64) -> bool {
+        if !now.is_finite() {
+            return self.zoom_anim.is_some();
+        }
+        let Some(anim) = &mut self.zoom_anim else { return false };
+        let t0 = *anim.t0.get_or_insert(now);
+        let t = ((now - t0) / ZOOM_GLIDE_SECS).clamp(0.0, 1.0);
+        // Ease-out cubic: fast start, soft landing.
+        let e = 1.0 - (1.0 - t as f32).powi(3);
+        let (from, to) = (anim.from, anim.to);
+        // Keep the viewport centre still, like set_zoom, on every frame of the flight.
+        let centre = self.viewport_screen.center();
+        self.zoom_at(from + (to - from) * e, centre);
+        if t >= 1.0 {
+            self.zoom = to;
+            self.zoom_anim = None;
+            return false;
+        }
+        true
     }
 
     /// Pull finished renders into textures.
@@ -2941,6 +2982,30 @@ mod tests {
             assert!(!notch(&mut v, -1.0, 1.0), "{layout:?} ignores the wheel");
             assert_eq!(v.current, 0);
         }
+    }
+
+    #[test]
+    fn zoom_steps_glide_to_their_target() {
+        let mut v = view(3, PageLayout::Continuous);
+        v.zoom = 1.0;
+        v.zoom_step(true);
+        assert!(v.advance_zoom(1000.0), "a step starts a flight");
+        v.advance_zoom(1000.0 + ZOOM_GLIDE_SECS / 2.0);
+        assert!(v.zoom > 1.0 && v.zoom < 1.25, "mid-flight between: {}", v.zoom);
+        assert!(!v.advance_zoom(1000.0 + ZOOM_GLIDE_SECS), "landed");
+        assert_eq!(v.zoom, 1.25);
+    }
+
+    #[test]
+    fn zoom_steps_retarget_mid_flight_and_survive_bad_time() {
+        let mut v = view(3, PageLayout::Continuous);
+        v.zoom = 1.0;
+        v.zoom_step(false);
+        assert!(v.advance_zoom(1000.0));
+        v.zoom_step(false);
+        assert!(v.advance_zoom(f64::NAN), "a bad stamp changes nothing");
+        assert!(!v.advance_zoom(1000.0 + 1.0), "landed");
+        assert_eq!(v.zoom, 0.75);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Headless UI tests (egui_kittest + AccessKit). They drive the real app shell without a window.
 
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use pdfcraft_ui_egui::PdfCraftApp;
 
 /// A tiny PDF with two pages, two bookmarks and one sticky note.
@@ -34,6 +34,35 @@ fn home_shows_welcome_and_tools() {
     h.get_by_label_contains("Welcome to PdfCraft");
     assert!(h.query_all_by_label("Organize pages").count() >= 2, "tool list + home card");
     h.get_by_label("Open file");
+}
+
+/// Many open documents scroll in the tab strip instead of sliding under the icons:
+/// the active last tab stays left of the right-side controls.
+#[test]
+fn many_tabs_scroll_without_sliding_under_the_icons() {
+    let mut h = harness(|app| {
+        for i in 0..25 {
+            app.open_bytes(&format!("d{i:02}.pdf"), None, FIXTURE.to_vec()).expect("fixture opens");
+        }
+    });
+    h.run_steps(2);
+    h.state_mut().active = Some(0);
+    h.run_steps(2);
+    h.state_mut().active = Some(24);
+    h.run_steps(3);
+    let last = h.get_by_label("d24.pdf").rect();
+    let help = h.get_by_label("Keyboard shortcuts").rect();
+    assert!(last.right() <= help.left(), "the active last tab stays left of the icons: {last:?} vs {help:?}");
+}
+
+/// The Windows custom title bar carries the window buttons in the tab strip.
+#[cfg(target_os = "windows")]
+#[test]
+fn window_buttons_sit_in_the_tab_strip() {
+    let h = harness(|_| {});
+    for label in ["Minimize", "Maximize", "Close"] {
+        assert!(h.query_all_by_label(label).count() >= 1, "{label} button missing");
+    }
 }
 
 #[test]

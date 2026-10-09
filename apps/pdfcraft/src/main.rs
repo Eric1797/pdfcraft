@@ -169,6 +169,14 @@ fn main() -> eframe::Result {
     if integrated {
         viewport = viewport.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false);
     }
+    // Revisioned (#6): on Windows the menu bar, tabs and window buttons share one custom
+    // title bar (Adobe-style layout, our own icons), so the native title bar goes. Drag,
+    // buttons, snapping shortcuts and manual edge resize are drawn by the app
+    // (crates/ui-egui/src/chrome.rs); other platforms keep their native chrome.
+    #[cfg(target_os = "windows")]
+    {
+        viewport = viewport.with_decorations(false);
+    }
     migrate_legacy_folders();
     // The log file lives in the settings folder; opened after the arguments (so `--version` leaves
     // no file behind) and after the PrintCraft migration (which a fresh folder would block).

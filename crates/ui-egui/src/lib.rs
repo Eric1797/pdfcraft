@@ -505,6 +505,8 @@ pub struct PdfCraftApp {
     pub window_title: String,
     /// The UI control channel, when enabled (`--control`; off by default).
     control: Option<control::Control>,
+    /// Manual window-edge resize drag (Windows custom title bar only).
+    pub window_resize: Option<chrome::WindowResize>,
     /// Single-instance handoff listener (desktop only): later launches forward their files
     /// here instead of opening another window (#367).
     #[cfg(not(target_arch = "wasm32"))]
@@ -697,6 +699,7 @@ impl PdfCraftApp {
             fonts_ready: false,
             fonts_hans: false,
             control: None,
+            window_resize: None,
             #[cfg(not(target_arch = "wasm32"))]
             handoff: None,
             bookmark_rename: None,
@@ -1699,6 +1702,10 @@ impl eframe::App for PdfCraftApp {
         self.process_picked();
         // Pull finished renders into textures for every open document.
         for view in &mut self.views {
+            let now = ctx.input(|i| i.time);
+            if view.advance_zoom(now) {
+                ctx.request_repaint();
+            }
             if let Some(doc) = self.session.get(view.id) {
                 view.receive(ctx, &doc.renderer);
             }
@@ -1763,5 +1770,8 @@ impl eframe::App for PdfCraftApp {
         dialogs::show(self, &ctx);
         self.show_progress(&ctx);
         widgets::toast(self, &ctx);
+        // Manual edge resize above everything (Windows custom title bar only).
+        #[cfg(target_os = "windows")]
+        chrome::resize_edges(self, &ctx);
     }
 }
