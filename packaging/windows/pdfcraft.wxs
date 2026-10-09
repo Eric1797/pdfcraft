@@ -111,12 +111,13 @@
         <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.jpx\shell\PdfCraft.CreatePdf" Name="MultiSelectModel" Value="Single" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.jpx\shell\PdfCraft.CreatePdf\command" Value="&quot;[#PdfcraftExe]&quot; --create-images &quot;%1&quot;" Type="string" />
 
-        <!-- PDF context menu (#367): select several PDFs, combine them in order. Document model:
+        <!-- PDF context menu (#367): select several PDFs, combine them in order. Player model:
              one PdfCraft with every selected file, staged in the Combine files tab for rearranging
-             (drag, sort, move) before combining. Under SystemFileAssociations so no PDF default
-             is changed, and owned by this component so uninstall removes it. -->
+             (drag, sort, move) before combining (Document would launch one PdfCraft per file).
+             Under SystemFileAssociations so no PDF default is changed, and owned by this
+             component so uninstall removes it. -->
         <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\PdfCraft.Combine" Value="Combine with PdfCraft…" Type="string" />
-        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\PdfCraft.Combine" Name="MultiSelectModel" Value="Document" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\PdfCraft.Combine" Name="MultiSelectModel" Value="Player" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\PdfCraft.Combine\command" Value="&quot;[#PdfcraftExe]&quot; --combine &quot;%1&quot;" Type="string" />
       </Component>
 
