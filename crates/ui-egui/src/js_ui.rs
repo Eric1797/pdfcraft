@@ -466,7 +466,9 @@ fn dib32_rgba(body: &[u8], width: u32, height: u32) -> Result<(u32, u32, Vec<u8>
         for x in 0..width as usize {
             let p = px.get(buf_y * stride + x * 4..buf_y * stride + x * 4 + 4).ok_or_else(bad)?;
             let transparent = mask.get(buf_y * and_stride + x / 8).is_some_and(|m| m & (0x80 >> (x % 8)) != 0);
-            rgba.extend_from_slice(if transparent { &[0, 0, 0, 0] } else { &[p[2], p[1], p[0], p[3]] });
+            let transparent_px = [0, 0, 0, 0];
+            let opaque_px = [p[2], p[1], p[0], p[3]];
+            rgba.extend_from_slice(if transparent { &transparent_px } else { &opaque_px });
         }
     }
     Ok((width, height, rgba))
