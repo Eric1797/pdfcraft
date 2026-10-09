@@ -1,6 +1,8 @@
 //! Window chrome: tab strip (with the integrated macOS title bar), mode bar, right rail.
 
-use egui::{Align, Align2, Color32, CornerRadius, CursorIcon, Layout, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
+use egui::{Align, Align2, Color32, CornerRadius, Layout, Rect, Sense, Stroke, vec2};
+#[cfg(target_os = "windows")]
+use egui::{CursorIcon, Pos2, Vec2, pos2};
 
 use crate::canvas::{DocView, Fit, PageLayout};
 use crate::theme::{self, ThemePreference, Tokens};
@@ -465,11 +467,13 @@ fn rail_view_menu(ui: &mut egui::Ui, view: &mut DocView) -> Option<&'static str>
 }
 
 /// Grab width of the manual resize rim (Windows custom title bar), in points.
+#[cfg(target_os = "windows")]
 const RESIZE_RIM: f32 = 6.0;
 
 /// A window edge (or corner) a manual resize drag holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
+#[cfg(target_os = "windows")]
 pub enum ResizeEdge {
     Left,
     Right,
@@ -480,6 +484,7 @@ pub enum ResizeEdge {
 
 /// Manual window-edge resize drag (Windows custom title bar only).
 #[derive(Clone, Copy, Debug)]
+#[cfg(target_os = "windows")]
 pub struct WindowResize {
     edge: ResizeEdge,
     /// Pointer and window rect when the drag started (points).
@@ -492,6 +497,7 @@ pub struct WindowResize {
 /// New window rect when the pointer moved `delta` since the drag started. Left edges
 /// move the position too; everything clamps to `min`. A non-finite delta (never seen
 /// from input) resizes nothing rather than poisoning the rect.
+#[cfg(target_os = "windows")]
 pub fn resize_rect(start: Rect, edge: ResizeEdge, delta: Vec2, min: Vec2) -> Rect {
     let delta = Vec2::new(if delta.x.is_finite() { delta.x } else { 0.0 }, if delta.y.is_finite() { delta.y } else { 0.0 });
     let (mut lo, mut hi) = (start.min, start.max);
@@ -561,7 +567,7 @@ pub fn resize_edges(app: &mut PdfCraftApp, ctx: &egui::Context) {
     });
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "windows"))]
 mod tests {
     use super::*;
 
@@ -588,18 +594,22 @@ mod tests {
 
     #[test]
     fn bottom_and_corners_move_both_axes() {
-        let down = resize_rect(rect(), ResizeEdge::Bottom, vec2(0.0, 30.0), vec2(820.0, 520.0));
+        // The minimum sits below the test rect, so clamping never kicks in here.
+        let min = vec2(700.0, 500.0);
+        let down = resize_rect(rect(), ResizeEdge::Bottom, vec2(0.0, 30.0), min);
         assert_eq!(down.size(), vec2(800.0, 630.0));
-        let corner = resize_rect(rect(), ResizeEdge::BottomRight, vec2(10.0, 20.0), vec2(820.0, 520.0));
+        let corner = resize_rect(rect(), ResizeEdge::BottomRight, vec2(10.0, 20.0), min);
         assert_eq!((corner.min, corner.size()), (rect().min, vec2(810.0, 620.0)));
-        let other = resize_rect(rect(), ResizeEdge::BottomLeft, vec2(-10.0, 20.0), vec2(820.0, 520.0));
+        let other = resize_rect(rect(), ResizeEdge::BottomLeft, vec2(-10.0, 20.0), min);
         assert_eq!((other.min.x, other.size()), (90.0, vec2(810.0, 620.0)));
     }
 
     #[test]
     fn non_finite_deltas_resize_nothing() {
+        // A minimum below the test rect, so only the damaged delta matters.
+        let min = vec2(100.0, 100.0);
         for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            assert_eq!(resize_rect(rect(), ResizeEdge::BottomRight, vec2(bad, bad), vec2(820.0, 520.0)), rect());
+            assert_eq!(resize_rect(rect(), ResizeEdge::BottomRight, vec2(bad, bad), min), rect());
         }
     }
 }

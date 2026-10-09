@@ -522,6 +522,7 @@ pub struct PdfCraftApp {
     /// The UI control channel, when enabled (`--control`; off by default).
     control: Option<control::Control>,
     /// Manual window-edge resize drag (Windows custom title bar only).
+    #[cfg(target_os = "windows")]
     pub window_resize: Option<chrome::WindowResize>,
     /// Single-instance handoff listener (desktop only): later launches forward their files
     /// here instead of opening another window (#367).
@@ -721,6 +722,7 @@ impl PdfCraftApp {
             fonts_ready: false,
             fonts_hans: false,
             control: None,
+            #[cfg(target_os = "windows")]
             window_resize: None,
             #[cfg(not(target_arch = "wasm32"))]
             handoff: None,

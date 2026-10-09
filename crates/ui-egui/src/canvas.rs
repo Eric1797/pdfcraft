@@ -869,6 +869,13 @@ impl DocView {
         }
         let Some(anim) = &mut self.zoom_anim else { return false };
         let t0 = *anim.t0.get_or_insert(now);
+        // Landing compares stamps, not the eased fraction: the fraction can sit an
+        // ulp below 1.0 at exactly the end time and would glide forever.
+        if now >= t0 + ZOOM_GLIDE_SECS {
+            self.zoom = anim.to;
+            self.zoom_anim = None;
+            return false;
+        }
         let t = ((now - t0) / ZOOM_GLIDE_SECS).clamp(0.0, 1.0);
         // Ease-out cubic: fast start, soft landing.
         let e = 1.0 - (1.0 - t as f32).powi(3);
@@ -876,11 +883,6 @@ impl DocView {
         // Keep the viewport centre still, like set_zoom, on every frame of the flight.
         let centre = self.viewport_screen.center();
         self.zoom_at(from + (to - from) * e, centre);
-        if t >= 1.0 {
-            self.zoom = to;
-            self.zoom_anim = None;
-            return false;
-        }
         true
     }
 
@@ -3002,9 +3004,11 @@ mod tests {
         v.zoom = 1.0;
         v.zoom_step(false);
         assert!(v.advance_zoom(1000.0));
+        // A new step mid-flight restarts the clock from its own first stamp.
         v.zoom_step(false);
         assert!(v.advance_zoom(f64::NAN), "a bad stamp changes nothing");
-        assert!(!v.advance_zoom(1000.0 + 1.0), "landed");
+        assert!(v.advance_zoom(1000.0), "retargeted flight starts over");
+        assert!(!v.advance_zoom(1000.0 + ZOOM_GLIDE_SECS), "landed");
         assert_eq!(v.zoom, 0.75);
     }
 
