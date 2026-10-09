@@ -87,12 +87,15 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         });
                 });
                 // The Open button stays fixed after the tabs (always reachable without
-                // scrolling to the very end), then the right-side icons.
+                // scrolling to the very end), then the right-side icons. `before` is
+                // measured before either, so the reserved width covers both: measuring
+                // after the Open button made the tabs too wide by its width and pushed
+                // the rightmost window buttons (Close, Maximize) past the panel edge.
+                let before = ui.available_width();
                 ui.add_space(4.0);
                 if widgets::ghost_button(ui, "plus", tl!("Open")).on_hover_text(tl!("Open a PDF (⌘O)")).clicked() {
                     app.open_dialog();
                 }
-                let before = ui.available_width();
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     // Windows draws no native title bar: minimize, maximize/restore and close
                     // live at the bar's right end (#6, revisioned). First added is rightmost.
