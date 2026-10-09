@@ -2044,3 +2044,25 @@
 	Choose a PNG or JPEG image (up to 4 MiB). Transparency is preserved.	选择 PNG 或 JPEG 图像（最大 4 MiB）。透明度会保留。
 	Couldn't import the signature image: {e}	无法导入签名图像：{e}
 	Go to page…	转到页面…
+
+# Window controls for the custom Windows title bar: English until translated.
+	Minimize	Minimize
+	Maximize	Maximize
+	Restore	Restore
+
+# Customize program (Preferences): English until translated.
+	Customize program	Customize program
+	App name	App name
+	Window and taskbar title; empty keeps PdfCraft.	Window and taskbar title; empty keeps PdfCraft.
+
+# Combine grid view: English until translated.
+	Grid	Grid
+
+# Tools and Home preferences: English until translated.
+	Tools and Home	Tools and Home
+	Show planned and provider tools	Show planned and provider tools
+	Show the ArtCraft community box on Home	Show the ArtCraft community box on Home
+	Unfinished tools stay hidden from the tool panel and the palette until shown.	Unfinished tools stay hidden from the tool panel and the palette until shown.
+	1 planned tool is hidden	1 planned tool is hidden
+	{n} planned tools are hidden	{n} planned tools are hidden
+	Show in Preferences	Show in Preferences

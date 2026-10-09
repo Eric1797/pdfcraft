@@ -1,6 +1,8 @@
 //! Window chrome: tab strip (with the integrated macOS title bar), mode bar, right rail.
 
 use egui::{Align, Align2, Color32, CornerRadius, Layout, Rect, Sense, Stroke, vec2};
+#[cfg(target_os = "windows")]
+use egui::{CursorIcon, Pos2, Vec2, pos2};
 
 use crate::canvas::{DocView, Fit, PageLayout};
 use crate::theme::{self, ThemePreference, Tokens};
@@ -28,32 +30,89 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     app.active = None;
                     app.combine_tab.focused = false;
                 }
+                // Reserve exactly what the fixed controls (Open button, right-side icons)
+                // took last frame, so tabs never slide under them at any font scale or
+                // window width (first frame estimates).
+                let reserve_id = ui.id().with("tab-reserve");
+                let fallback = if cfg!(target_os = "windows") { 250.0 } else { 152.0 };
+                let reserve = ui.data_mut(|data| data.get_temp::<f32>(reserve_id)).unwrap_or(fallback);
+                // Tabs scroll horizontally when more are open than fit (wheel included); the
+                // active tab scrolls into view whenever the selection changes.
+                let state = (app.active, app.views.len(), app.combine_showing());
+                let changed = ui.data_mut(|data| {
+                    let id = ui.id().with("active_tab");
+                    let changed = data.get_temp::<(Option<usize>, usize, bool)>(id) != Some(state);
+                    data.insert_temp(id, state);
+                    changed
+                });
                 let mut close = None;
-                for i in 0..app.views.len() {
-                    let Some(doc) = app.session.get(app.views[i].id) else { continue };
-                    let (name, dirty) = (doc.display_name(), doc.dirty);
-                    if tab(ui, &t, "file-text", &name, dirty, app.active == Some(i), &mut close, i).clicked() {
-                        app.active = Some(i);
-                    }
-                }
-                if let Some(i) = close {
-                    app.request_close_tab(i);
-                }
-                if app.combine_tab.open {
-                    // After the document tabs; its index can't clash with theirs.
-                    let mut close = None;
-                    if tab(ui, &t, "files", tl!("Combine files"), false, app.combine_showing(), &mut close, usize::MAX).clicked() {
-                        app.open_combine_tab();
-                    }
-                    if close.is_some() {
-                        app.close_combine_tab();
-                    }
-                }
+                ui.scope(|ui| {
+                    ui.style_mut().always_scroll_the_only_direction = true;
+                    egui::ScrollArea::horizontal()
+                        .id_salt("document_tabs")
+                        .max_width((ui.available_width() - reserve).max(0.0))
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            ui.horizontal_centered(|ui| {
+                                for i in 0..app.views.len() {
+                                    let Some(doc) = app.session.get(app.views[i].id) else { continue };
+                                    let (name, dirty) = (doc.display_name(), doc.dirty);
+                                    let response = tab(ui, &t, "file-text", &name, dirty, app.active == Some(i), &mut close, i);
+                                    if changed && app.active == Some(i) && !app.combine_showing() {
+                                        response.scroll_to_me(Some(Align::Center));
+                                    }
+                                    if response.clicked() {
+                                        app.active = Some(i);
+                                    }
+                                }
+                                if let Some(i) = close {
+                                    app.request_close_tab(i);
+                                }
+                                if app.combine_tab.open {
+                                    // After the document tabs; its index can't clash with theirs.
+                                    let mut close = None;
+                                    let response = tab(ui, &t, "files", tl!("Combine files"), false, app.combine_showing(), &mut close, usize::MAX);
+                                    if changed && app.combine_showing() {
+                                        response.scroll_to_me(Some(Align::Center));
+                                    }
+                                    if response.clicked() {
+                                        app.open_combine_tab();
+                                    }
+                                    if close.is_some() {
+                                        app.close_combine_tab();
+                                    }
+                                }
+                                ui.add_space(4.0);
+                            });
+                        });
+                });
+                // The Open button stays fixed after the tabs (always reachable without
+                // scrolling to the very end), then the right-side icons. `before` is
+                // measured before either, so the reserved width covers both: measuring
+                // after the Open button made the tabs too wide by its width and pushed
+                // the rightmost window buttons (Close, Maximize) past the panel edge.
+                let before = ui.available_width();
                 ui.add_space(4.0);
                 if widgets::ghost_button(ui, "plus", tl!("Open")).on_hover_text(tl!("Open a PDF (⌘O)")).clicked() {
                     app.open_dialog();
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    // Windows draws no native title bar: minimize, maximize/restore and close
+                    // live at the bar's right end (#6, revisioned). First added is rightmost.
+                    #[cfg(target_os = "windows")]
+                    {
+                        if icons::button(ui, "x", 28.0, false, tl!("Close")).clicked() {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        let maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+                        let (glyph, tip) = if maximized { ("copy", tl!("Restore")) } else { ("square", tl!("Maximize")) };
+                        if icons::button(ui, glyph, 28.0, false, tip).clicked() {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                        }
+                        if icons::button(ui, "minus", 28.0, false, tl!("Minimize")).clicked() {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        }
+                    }
                     let (icon, label) = match app.theme_preference {
                         ThemePreference::System => ("settings", tl!("Use system setting")),
                         ThemePreference::Light => ("sun", tl!("Light gray")),
@@ -65,11 +124,8 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     if icons::button(ui, "circle-help", 28.0, false, tl!("Keyboard shortcuts")).clicked() {
                         app.dialog = Some(Dialog::Shortcuts);
                     }
-                    // One click to the community, from anywhere in the app.
-                    if widgets::ghost_button(ui, "messages-square", "Discord").on_hover_text(pdfcraft_engine::links::DISCORD).clicked() {
-                        app.execute("help.discord");
-                    }
                 });
+                ui.data_mut(|data| data.insert_temp(reserve_id, (before - ui.available_width()).max(0.0) + 4.0));
             });
         });
 }
@@ -130,7 +186,8 @@ pub fn mode_bar(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     egui::Panel::top("mode_bar")
         .exact_size(48.0)
-        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(10, 0)).stroke(Stroke::new(1.0, t.divider)))
+        // No bottom divider: the active tab's indicator is the bar's only line.
+        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(10, 0)))
         .show(ui, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
@@ -411,4 +468,152 @@ fn rail_view_menu(ui: &mut egui::Ui, view: &mut DocView) -> Option<&'static str>
         ui.close();
     }
     picked
+}
+
+/// Grab width of the manual resize rim (Windows custom title bar), in points.
+#[cfg(target_os = "windows")]
+const RESIZE_RIM: f32 = 6.0;
+
+/// A window edge (or corner) a manual resize drag holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+#[cfg(target_os = "windows")]
+pub enum ResizeEdge {
+    Left,
+    Right,
+    Bottom,
+    BottomLeft,
+    BottomRight,
+}
+
+/// Manual window-edge resize drag (Windows custom title bar only).
+#[derive(Clone, Copy, Debug)]
+#[cfg(target_os = "windows")]
+pub struct WindowResize {
+    edge: ResizeEdge,
+    /// Pointer and window rect when the drag started (points).
+    origin: Pos2,
+    start: Rect,
+    /// Last rect sent, so a still pointer sends nothing.
+    sent: Rect,
+}
+
+/// New window rect when the pointer moved `delta` since the drag started. Left edges
+/// move the position too; everything clamps to `min`. A non-finite delta (never seen
+/// from input) resizes nothing rather than poisoning the rect.
+#[cfg(target_os = "windows")]
+pub fn resize_rect(start: Rect, edge: ResizeEdge, delta: Vec2, min: Vec2) -> Rect {
+    let delta = Vec2::new(if delta.x.is_finite() { delta.x } else { 0.0 }, if delta.y.is_finite() { delta.y } else { 0.0 });
+    let (mut lo, mut hi) = (start.min, start.max);
+    if matches!(edge, ResizeEdge::Left | ResizeEdge::BottomLeft) {
+        lo.x = (start.min.x + delta.x).min(start.max.x - min.x);
+    }
+    if matches!(edge, ResizeEdge::Right | ResizeEdge::BottomRight) {
+        hi.x = (start.min.x + min.x).max(start.max.x + delta.x);
+    }
+    if !matches!(edge, ResizeEdge::Left | ResizeEdge::Right) {
+        hi.y = (start.min.y + min.y).max(start.max.y + delta.y);
+    }
+    Rect { min: lo, max: hi }
+}
+
+/// Manual window-edge resize for the decoration-less Windows bar (#6, revisioned).
+/// Skipped when maximized or fullscreen (nothing to resize). The strips hug the rim
+/// outside the panels; a floating panel scrollbar may briefly underlap their outer
+/// points while it is visible. The top edge stays with the tab strip (drag to move).
+#[cfg(target_os = "windows")]
+pub fn resize_edges(app: &mut PdfCraftApp, ctx: &egui::Context) {
+    if app.full_screen || ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
+        app.window_resize = None;
+        return;
+    }
+    if let Some(drag) = app.window_resize {
+        if !ctx.input(|i| i.pointer.primary_down()) {
+            app.window_resize = None;
+            return;
+        }
+        let (pos, _) = ctx.input(|i| (i.pointer.hover_pos(), i.viewport().inner_rect));
+        if let Some(pos) = pos {
+            let next = resize_rect(drag.start, drag.edge, pos - drag.origin, vec2(820.0, 520.0));
+            if next != drag.sent {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(next.size()));
+                if next.min != drag.start.min {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(next.min));
+                }
+                if let Some(active) = app.window_resize.as_mut() {
+                    active.sent = next;
+                }
+            }
+            ctx.request_repaint();
+        }
+        return;
+    }
+    let screen = ctx.viewport_rect();
+    let zones = [
+        (ResizeEdge::BottomLeft, Rect::from_min_size(pos2(0.0, screen.max.y - 14.0), vec2(14.0, 14.0)), CursorIcon::ResizeNeSw),
+        (ResizeEdge::BottomRight, Rect::from_min_size(pos2(screen.max.x - 14.0, screen.max.y - 14.0), vec2(14.0, 14.0)), CursorIcon::ResizeNwSe),
+        (ResizeEdge::Left, Rect::from_min_max(pos2(0.0, 0.0), pos2(RESIZE_RIM, screen.max.y)), CursorIcon::ResizeHorizontal),
+        (ResizeEdge::Right, Rect::from_min_max(pos2(screen.max.x - RESIZE_RIM, 0.0), pos2(screen.max.x, screen.max.y)), CursorIcon::ResizeHorizontal),
+        (ResizeEdge::Bottom, Rect::from_min_max(pos2(0.0, screen.max.y - RESIZE_RIM), pos2(screen.max.x, screen.max.y)), CursorIcon::ResizeVertical),
+    ];
+    egui::Area::new(egui::Id::new("window-resize")).order(egui::Order::Foreground).fixed_pos(pos2(0.0, 0.0)).show(ctx, |ui| {
+        for (edge, rect, cursor) in zones {
+            let response = ui.interact(rect, ui.id().with(("resize", edge as u8)), Sense::drag());
+            if response.hovered() {
+                ui.ctx().set_cursor_icon(cursor);
+            }
+            if response.drag_started()
+                && let (Some(origin), Some(start)) = (response.interact_pointer_pos(), ctx.input(|i| i.viewport().inner_rect))
+            {
+                app.window_resize = Some(WindowResize { edge, origin, start, sent: start });
+            }
+        }
+    });
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::*;
+
+    fn rect() -> Rect {
+        Rect::from_min_size(pos2(100.0, 100.0), vec2(800.0, 600.0))
+    }
+
+    #[test]
+    fn right_edge_grows_and_clamps_to_the_minimum() {
+        let grown = resize_rect(rect(), ResizeEdge::Right, vec2(50.0, 0.0), vec2(820.0, 520.0));
+        assert_eq!((grown.min, grown.size()), (rect().min, vec2(850.0, 600.0)));
+        let shrunk = resize_rect(rect(), ResizeEdge::Right, vec2(-500.0, 0.0), vec2(820.0, 520.0));
+        assert_eq!(shrunk.size(), vec2(820.0, 600.0), "never below the minimum");
+        assert_eq!(shrunk.min, rect().min, "the position never moves");
+    }
+
+    #[test]
+    fn left_edge_moves_and_clamps_to_the_minimum() {
+        let grown = resize_rect(rect(), ResizeEdge::Left, vec2(-40.0, 0.0), vec2(820.0, 520.0));
+        assert_eq!((grown.min.x, grown.size().x), (60.0, 840.0));
+        let shrunk = resize_rect(rect(), ResizeEdge::Left, vec2(500.0, 0.0), vec2(820.0, 520.0));
+        assert_eq!((shrunk.min.x, shrunk.size().x), (80.0, 820.0), "stops at the minimum width");
+    }
+
+    #[test]
+    fn bottom_and_corners_move_both_axes() {
+        // The minimum sits below the test rect, so clamping never kicks in here.
+        let min = vec2(700.0, 500.0);
+        let down = resize_rect(rect(), ResizeEdge::Bottom, vec2(0.0, 30.0), min);
+        assert_eq!(down.size(), vec2(800.0, 630.0));
+        let corner = resize_rect(rect(), ResizeEdge::BottomRight, vec2(10.0, 20.0), min);
+        assert_eq!((corner.min, corner.size()), (rect().min, vec2(810.0, 620.0)));
+        let other = resize_rect(rect(), ResizeEdge::BottomLeft, vec2(-10.0, 20.0), min);
+        assert_eq!((other.min.x, other.size()), (90.0, vec2(810.0, 620.0)));
+    }
+
+    #[test]
+    fn non_finite_deltas_resize_nothing() {
+        // A minimum below the test rect, so only the damaged delta matters.
+        let min = vec2(100.0, 100.0);
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(resize_rect(rect(), ResizeEdge::BottomRight, vec2(bad, bad), min), rect());
+        }
+    }
 }

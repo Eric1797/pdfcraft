@@ -61,23 +61,32 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
         }
     }
     for g in TOOL_GROUPS {
-        if let Some(s) = score(tl!(g.label), &q).or_else(|| score(g.label, &q)) {
-            hits.push((
-                s,
-                Hit {
-                    group: Some(g.id),
-                    label: tl!(g.label).to_string(),
-                    detail: tl!("Tool").into(),
-                    icon: g.icon,
-                    command: None,
-                    ready: g.availability == Availability::Ready,
-                },
-            ));
+        // Unfinished tools stay out of the palette too, unless Preferences shows them.
+        // Registered commands are always listed above on their own merits; finished items
+        // of a planned group stay listed either way.
+        let group_visible = app.show_planned_tools || g.availability == Availability::Ready;
+        if group_visible {
+            if let Some(s) = score(tl!(g.label), &q).or_else(|| score(g.label, &q)) {
+                hits.push((
+                    s,
+                    Hit {
+                        group: Some(g.id),
+                        label: tl!(g.label).to_string(),
+                        detail: tl!("Tool").into(),
+                        icon: g.icon,
+                        command: None,
+                        ready: g.availability == Availability::Ready,
+                    },
+                ));
+            }
         }
         for sec in g.sections {
             for i in sec.items {
                 if pdfcraft_engine::commands::command(i.command).is_some() {
                     continue; // listed above as a command
+                }
+                if !app.show_planned_tools && i.availability != Availability::Ready {
+                    continue;
                 }
                 if let Some(s) = score(tl!(i.label), &q).or_else(|| score(i.label, &q)).or_else(|| score(i.command, &q).map(|s| s + 50)) {
                     hits.push((

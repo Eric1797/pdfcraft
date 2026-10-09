@@ -36,6 +36,52 @@ fn home_shows_welcome_and_tools() {
     h.get_by_label("Open file");
 }
 
+/// Many open documents scroll in the tab strip instead of sliding under the icons:
+/// the active last tab stays left of the right-side controls.
+#[test]
+fn many_tabs_scroll_without_sliding_under_the_icons() {
+    let mut h = harness(|app| {
+        for i in 0..25 {
+            app.open_bytes(&format!("d{i:02}.pdf"), None, FIXTURE.to_vec()).expect("fixture opens");
+        }
+    });
+    h.run_steps(2);
+    h.state_mut().active = Some(0);
+    h.run_steps(2);
+    h.state_mut().active = Some(24);
+    h.run_steps(3);
+    let last = h.get_by_label("d24.pdf").rect();
+    let help = h.get_by_label("Keyboard shortcuts").rect();
+    assert!(last.right() <= help.left(), "the active last tab stays left of the icons: {last:?} vs {help:?}");
+}
+
+/// The Windows custom title bar carries the window buttons in the tab strip.
+#[cfg(target_os = "windows")]
+#[test]
+fn window_buttons_sit_in_the_tab_strip() {
+    let h = harness(|_| {});
+    for label in ["Minimize", "Maximize", "Close"] {
+        assert!(h.query_all_by_label(label).count() >= 1, "{label} button missing");
+    }
+}
+
+/// Preferences ▸ Customize program renames the window (and persists the choice).
+#[test]
+fn custom_name_reaches_the_window_title_and_persists() {
+    let mut h = harness(|_| {});
+    h.state_mut().execute("app.preferences");
+    h.run_steps(2);
+    assert!(h.query_all_by_label("App name").count() >= 1, "customize program section shows");
+    h.state_mut().custom_name = "My PDFs".into();
+    h.run_steps(2);
+    assert!(h.state().window_title.starts_with("My PDFs"), "window title: {}", h.state().window_title);
+    let saved = h.state().persist();
+    assert!(saved.contains("My PDFs"));
+    let mut restored = harness(|_| {});
+    restored.state_mut().restore(&saved);
+    assert_eq!(restored.state().custom_name, "My PDFs");
+}
+
 #[test]
 fn every_catalog_tool_is_listed_after_view_more() {
     let mut h = harness(|_| {});
@@ -430,4 +476,59 @@ fn opening_a_pdf_keeps_a_closed_left_panel_and_the_chosen_tool() {
     app.open_bytes("second.pdf", None, FIXTURE.to_vec()).unwrap();
     assert_eq!(app.mode, Mode::AllTools);
     assert_eq!(app.left, LeftPanel::Tool("export"));
+}
+
+/// Unfinished catalogue tools stay out of the tool panel until Preferences shows them, and
+/// finished tools carry no availability chip.
+#[test]
+fn unfinished_tools_are_hidden_until_preferences_show_them() {
+    use pdfcraft_ui_egui::LeftPanel;
+    let mut h = harness(|app| app.left = LeftPanel::Tool("standards"));
+    h.run_steps(2);
+    assert!(h.query_all_by_label("Save as PDF/A").count() >= 1, "finished tools are listed");
+    assert!(h.query_all_by_label("Save as PDF/X").count() == 0, "planned tools are hidden");
+    h.get_by_label("3 planned tools are hidden");
+    h.get_by_label("Show in Preferences").click();
+    h.run_steps(2);
+    assert_eq!(h.state().dialog, Some(pdfcraft_ui_egui::Dialog::Preferences), "the footer note opens Preferences");
+    h.state_mut().dialog = None;
+    h.state_mut().show_planned_tools = true;
+    h.run_steps(2);
+    assert!(h.query_all_by_label("Save as PDF/X").count() >= 1, "opted-in planned tools are listed");
+    assert!(h.query_all_by_label("Show in Preferences").count() == 0, "no hidden note once shown");
+}
+
+/// The Home community card is opt-in from Preferences.
+#[test]
+fn the_community_card_is_opt_in() {
+    let h = harness(|_| {});
+    assert!(h.query_all_by_label("Join the ArtCraft community").count() == 0, "hidden by default");
+    let h = harness(|app| app.show_community = true);
+    h.get_by_label("Join the ArtCraft community");
+}
+
+/// The Tools and Home preferences persist and are settable as options.
+#[test]
+fn tools_and_home_preferences_persist_and_have_options() {
+    let mut app = PdfCraftApp::new();
+    assert!(!app.show_planned_tools && !app.show_community);
+    app.set_option("show-planned-tools", "on").unwrap();
+    app.set_option("show-community", "on").unwrap();
+    assert!(app.show_planned_tools && app.show_community);
+    assert!(app.set_option("show-planned-tools", "maybe").is_err());
+    assert!(app.set_option("show-community", "maybe").is_err());
+    let mut restored = PdfCraftApp::new();
+    restored.restore(&app.persist());
+    assert!(restored.show_planned_tools && restored.show_community, "remembered across restarts");
+}
+
+/// Recent files keep at most ten entries.
+#[test]
+fn recent_files_keep_at_most_ten() {
+    let mut app = PdfCraftApp::new();
+    for i in 0..12 {
+        app.open_bytes(&format!("d{i:02}.pdf"), Some(format!("/tmp/d{i:02}.pdf")), FIXTURE.to_vec()).expect("fixture opens");
+    }
+    assert_eq!(app.recent.len(), 10, "capped at ten");
+    assert_eq!(app.recent[0].name, "d11.pdf", "most recent first");
 }
