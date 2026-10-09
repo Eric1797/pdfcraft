@@ -138,6 +138,8 @@ pub struct CombineTab {
     pub focused: bool,
     /// The selected rows, by [`CombineFile::id`], so a selection survives sorting and moving.
     pub selected: BTreeSet<u64>,
+    /// A grid card drag in flight: the dragged row and the row hovered, if any.
+    pub drag: Option<(usize, Option<usize>)>,
     /// Where a Shift+click or Shift+arrow range starts, and where it ends.
     anchor: Option<u64>,
     cursor: Option<u64>,
@@ -469,7 +471,9 @@ pub(crate) fn page(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                 if n == 0 {
                     empty_state(app, ui, &t, files_hovering);
                 } else if app.combine_columns.grid {
-                    grid(app, ui, &t);
+                    if let Some(action) = grid(app, ui, &t) {
+                        events.action = Some(action);
+                    }
                 } else {
                     let table_events = table(app, ui, &t, &checks, &selected);
                     events.range_focused |= table_events.range_focused;
@@ -1367,8 +1371,6 @@ impl PdfCraftApp {
         self.combine_tab = CombineTab::default();
         self.combine_draft.clear();
         self.combine_thumbs.clear();
-        self.combine_preview = None;
-        self.combine_preview_tex = None;
         if showing {
             self.active = self.views.len().checked_sub(1);
         }
@@ -1579,29 +1581,10 @@ fn render_thumb(ctx: &egui::Context, id: u64, bytes: &Arc<Vec<u8>>) -> Option<eg
     Some(ctx.load_texture(format!("combine-thumb-{id}"), egui::ColorImage::from_rgba_premultiplied([w, h], &out.rgba), egui::TextureOptions::LINEAR))
 }
 
-/// First page large, with its aspect ratio, for the preview dialog.
-fn render_preview(ctx: &egui::Context, id: u64, bytes: &Arc<Vec<u8>>) -> Option<(egui::TextureHandle, f32)> {
-    let mut renderer = pdfcraft_render::PageRenderer::new(bytes.clone(), pdfcraft_render::RenderConfig::default());
-    if renderer.page_count() == 0 {
-        return None;
-    }
-    let out =
-        renderer.render(pdfcraft_render::RenderRequest { page: 0, kind: pdfcraft_render::RequestKind::Pixels, tile: None, scale: 0.75, tag: 0 });
-    if out.error.is_some() {
-        return None;
-    }
-    let (w, h) = (out.width as usize, out.height as usize);
-    if w == 0 || h == 0 || out.rgba.len() != 4 * w * h {
-        return None;
-    }
-    let tex =
-        ctx.load_texture(format!("combine-preview-{id}"), egui::ColorImage::from_rgba_premultiplied([w, h], &out.rgba), egui::TextureOptions::LINEAR);
-    Some((tex, h as f32 / w as f32))
-}
-
 /// The grid view: one card per file with its first page as a thumbnail (stacked look),
-/// in list order. Clicking a card selects it and opens the preview.
-fn grid(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
+/// in list order. Single click selects (with the usual Ctrl/Shift ways), double click
+/// opens the file in a tab, and cards drag to reorder — the same list the table shows.
+fn grid(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) -> Option<RowAction> {
     // Render missing thumbs without holding the draft borrow.
     let jobs: Vec<(u64, Arc<Vec<u8>>)> =
         app.combine_draft.iter().filter(|f| f.lock.is_none() && !app.combine_thumbs.contains_key(&f.id)).map(|f| (f.id, f.bytes.clone())).collect();
@@ -1610,6 +1593,7 @@ fn grid(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
             app.combine_thumbs.insert(id, tex);
         }
     }
+    let mut action = None;
     egui::ScrollArea::vertical().id_salt("combine-grid").show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(14.0, 14.0);
@@ -1620,19 +1604,57 @@ fn grid(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
                 };
                 let tex = app.combine_thumbs.get(&id).cloned();
                 let selected = app.combine_tab.selected.contains(&id);
-                if file_card(ui, t, &name, pages, tex.as_ref(), selected, locked) {
+                let hint = app.combine_tab.drag.is_some_and(|(_, hover)| hover == Some(i));
+                let resp = file_card(ui, t, &name, pages, tex.as_ref(), selected, locked, hint);
+                if resp.drag_started() {
+                    app.combine_tab.drag = Some((i, None));
+                }
+                if app.combine_tab.drag.is_some() && resp.hovered() {
+                    if let Some(drag) = app.combine_tab.drag.as_mut() {
+                        drag.1 = Some(i);
+                    }
+                }
+                if resp.double_clicked() {
+                    let (name, bytes) = {
+                        let f = &app.combine_draft[i];
+                        (f.name.clone(), f.bytes.clone())
+                    };
                     app.select_combine_rows(&[i]);
-                    app.combine_preview = Some(id);
-                    app.combine_preview_tex = None;
+                    if let Err(e) = app.open_bytes(&name, None, (*bytes).clone()) {
+                        app.notify_fmt("Couldn't open {name}: {e}", &[("name", &name), ("e", &e)]);
+                    }
+                } else if resp.clicked() {
+                    action = Some(RowAction::Click(i, ui.input(|k| k.modifiers)));
                 }
             }
         });
     });
-    preview(app, ui.ctx(), t);
+    // A finished drag reorders, like dropping table rows.
+    if let Some((from, hover)) = app.combine_tab.drag {
+        if !ui.input(|i| i.pointer.primary_down()) {
+            app.combine_tab.drag = None;
+            let to = hover.unwrap_or(app.combine_draft.len().saturating_sub(1));
+            if to != from {
+                action = Some(RowAction::Drop { from, to });
+            }
+        }
+    }
+    action
 }
 
 /// One grid card: stacked-pages look, thumbnail or lock placeholder, name and page count.
-fn file_card(ui: &mut egui::Ui, t: &Tokens, name: &str, pages: usize, tex: Option<&egui::TextureHandle>, selected: bool, locked: bool) -> bool {
+/// Returns the card response (click selects, double-click opens, drag reorders); `hint`
+/// outlines the drop target while dragging.
+fn file_card(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    name: &str,
+    pages: usize,
+    tex: Option<&egui::TextureHandle>,
+    selected: bool,
+    locked: bool,
+    hint: bool,
+) -> egui::Response {
     const W: f32 = 150.0;
     const H: f32 = 190.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(W, H + 46.0), Sense::click());
@@ -1646,7 +1668,7 @@ fn file_card(ui: &mut egui::Ui, t: &Tokens, name: &str, pages: usize, tex: Optio
         ui.painter().rect(thumb.translate(vec2(dx, dy)), CornerRadius::same(4), t.card, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     }
     ui.painter().rect(thumb, CornerRadius::same(4), t.card, Stroke::new(1.0, if selected { t.accent } else { t.border }), egui::StrokeKind::Inside);
-    if selected {
+    if selected || hint {
         ui.painter().rect(thumb, CornerRadius::same(4), Color32::TRANSPARENT, Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
     }
     match tex {
@@ -1670,47 +1692,5 @@ fn file_card(ui: &mut egui::Ui, t: &Tokens, name: &str, pages: usize, tex: Optio
             t.text_muted,
         );
     }
-    resp.clicked()
-}
-
-/// The grid card preview: the file's first page large, in a modal area. Rendered once
-/// per file while open; locked files show why they cannot be combined instead.
-fn preview(app: &mut PdfCraftApp, ctx: &egui::Context, t: &Tokens) {
-    let Some(id) = app.combine_preview else { return };
-    let Some(file) = app.combine_draft.iter().find(|f| f.id == id).cloned() else {
-        app.combine_preview = None; // the file left the list while previewing
-        return;
-    };
-    if app.combine_preview_tex.as_ref().is_none_or(|(cached, _, _)| *cached != id) {
-        app.combine_preview_tex = render_preview(ctx, id, &file.bytes).map(|(tex, aspect)| (id, tex, aspect));
-    }
-    let shown = app
-        .combine_preview_tex
-        .as_ref()
-        .and_then(|(cached, tex, aspect)| (*cached == id).then_some((tex, *aspect)))
-        .map(|(tex, aspect)| (tex.clone(), aspect));
-    let center = ctx.viewport_rect().center();
-    egui::Area::new(egui::Id::new("combine-preview"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(egui::pos2((center.x - 280.0).max(0.0), (center.y - 320.0).max(0.0)))
-        .show(ctx, |ui| {
-            egui::Frame::popup(ui.style()).inner_margin(egui::Margin::same(16)).show(ui, |ui| {
-                ui.set_width(520.0);
-                ui.label(egui::RichText::new(&file.name).font(theme::semibold(15.0)));
-                ui.add_space(8.0);
-                match shown {
-                    Some((tex, aspect)) => {
-                        ui.image((tex.id(), vec2(520.0, 520.0 * aspect)));
-                    }
-                    None => {
-                        ui.label(egui::RichText::new(file.problem.clone().unwrap_or(tl!("Password-protected").to_string())).color(t.text_muted));
-                    }
-                }
-                ui.add_space(8.0);
-                if ui.button(tl!("Close")).clicked() {
-                    app.combine_preview = None;
-                    app.combine_preview_tex = None;
-                }
-            });
-        });
+    resp
 }

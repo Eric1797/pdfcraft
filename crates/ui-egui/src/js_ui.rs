@@ -314,7 +314,7 @@ pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
         ui.label(tl!("App icon"));
         #[cfg(not(target_arch = "wasm32"))]
         if ui.button(tl!("Choose PNG…")).clicked() {
-            let dialog = rfd::AsyncFileDialog::new().add_filter("PNG image", &["png"]);
+            let dialog = rfd::AsyncFileDialog::new().add_filter("PNG image", &["png"]).add_filter("Icon", &["ico"]);
             app.ask_one(crate::pickers::Ask::File(dialog), None, |app, path| app.set_custom_icon(path));
         }
         if ui.button(tl!("Default")).clicked() {
@@ -369,13 +369,117 @@ fn icon_png_dims(png: &[u8]) -> Result<(u32, u32), String> {
     }
 }
 
+/// Decode a picked icon file (PNG, or ICO with PNG or 32-bit direct-color entries)
+/// into window-icon pixels. Everything is bounds-checked; hostile files are refused
+/// with a reason, never partially read.
+fn decode_icon_file(bytes: &[u8]) -> Result<egui::IconData, String> {
+    if bytes.len() > MAX_ICON_BYTES {
+        return Err(format!("larger than {} KiB", MAX_ICON_BYTES / 1024));
+    }
+    if bytes.get(..8) == Some(b"\x89PNG\r\n\x1a\n".as_slice()) {
+        icon_png_dims(bytes)?;
+        return eframe::icon_data::from_png_bytes(bytes).map_err(|e| e.to_string());
+    }
+    let (width, height, rgba) = ico_rgba(bytes)?;
+    Ok(egui::IconData { width, height, rgba })
+}
+
+/// Pixel data of an .ico file's best entry: the largest PNG entry, else the largest
+/// 32-bit direct-color entry (with its transparency mask), within bounds.
+fn ico_rgba(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+    let bad = || "bad icon file".to_string();
+    let dir = data.get(..6).ok_or_else(bad)?;
+    if dir.get(..4) != Some([0u8, 0, 1, 0].as_slice()) {
+        return Err("not an icon file".to_string());
+    }
+    let count = u16::from_le_bytes([dir[4], dir[5]]) as usize;
+    if count == 0 || count > 64 {
+        return Err(bad());
+    }
+    // (area, width, height, offset, end, png, bits per pixel).
+    let mut best_png: Option<(u32, u32, u32, usize, usize)> = None;
+    let mut best_dib: Option<(u32, u32, u32, usize, usize)> = None;
+    for i in 0..count {
+        let entry = data.get(6 + i * 16..6 + (i + 1) * 16).ok_or_else(bad)?;
+        let dim = |b: u8| if b == 0 { 256 } else { b as u32 };
+        let (w, h) = (dim(entry[0]), dim(entry[1]));
+        let bpp = u16::from_le_bytes([entry[4], entry[5]]);
+        let size = u32::from_le_bytes([entry[8], entry[9], entry[10], entry[11]]) as usize;
+        let offset = u32::from_le_bytes([entry[12], entry[13], entry[14], entry[15]]) as usize;
+        let end = offset.checked_add(size).ok_or_else(bad)?;
+        let body = data.get(offset..end).ok_or_else(bad)?;
+        let png = body.get(..8) == Some(b"\x89PNG\r\n\x1a\n".as_slice());
+        let area = w.saturating_mul(h);
+        let better = |best: &Option<(u32, u32, u32, usize, usize)>| area > best.map_or(0, |(a, _, _, _, _)| a);
+        if png && better(&best_png) {
+            best_png = Some((area, w, h, offset, end));
+        } else if !png && bpp == 32 && better(&best_dib) {
+            best_dib = Some((area, w, h, offset, end));
+        }
+    }
+    if let Some((_, _, _, offset, end)) = best_png {
+        let entry = data.get(offset..end).ok_or_else(bad)?;
+        icon_png_dims(entry)?;
+        return eframe::icon_data::from_png_bytes(entry).map(|icon| (icon.width, icon.height, icon.rgba)).map_err(|_| "unreadable image".to_string());
+    }
+    if let Some((_, w, h, offset, end)) = best_dib {
+        let body = data.get(offset..end).ok_or_else(bad)?;
+        return dib32_rgba(body, w, h);
+    }
+    Err("no usable image in the icon".to_string())
+}
+
+/// 32-bit direct-color DIB pixels (with transparency mask) as RGBA, top-down.
+fn dib32_rgba(body: &[u8], width: u32, height: u32) -> Result<(u32, u32, Vec<u8>), String> {
+    let bad = || "bad icon file".to_string();
+    let head = body.get(..40).ok_or_else(bad)?;
+    let u32le = |r: std::ops::Range<usize>| head.get(r).and_then(|b| <[u8; 4]>::try_from(b).ok()).map(u32::from_le_bytes);
+    let u16le = |r: std::ops::Range<usize>| head.get(r).and_then(|b| <[u8; 2]>::try_from(b).ok()).map(u16::from_le_bytes);
+    let (size, bw, bh, planes, bpp, comp) = match (u32le(0..4), head.get(4..12), u16le(12..14), u16le(14..16), u32le(16..20)) {
+        (Some(size), Some(wh), Some(planes), Some(bpp), Some(comp)) => {
+            let w = i32::from_le_bytes([wh[0], wh[1], wh[2], wh[3]]);
+            let h = i32::from_le_bytes([wh[4], wh[5], wh[6], wh[7]]);
+            (size, w, h, planes, bpp, comp)
+        }
+        _ => return Err(bad()),
+    };
+    // Uncompressed 32-bit, with the doubled height (pixels plus mask) the format stores.
+    if size != 40 || planes != 1 || bpp != 32 || comp != 0 || bw <= 0 || bh <= 0 || bh % 2 != 0 {
+        return Err("unsupported icon image".to_string());
+    }
+    if bw as u32 != width || (bh / 2) as u32 != height {
+        return Err(bad());
+    }
+    let stride = (width as usize).checked_mul(4).ok_or_else(bad)?;
+    let total = stride.checked_mul(height as usize).ok_or_else(bad)?;
+    let and_stride = (((width + 31) / 32) * 4) as usize;
+    let and_len = and_stride.checked_mul(height as usize).ok_or_else(bad)?;
+    let px_end = 40usize.checked_add(total).ok_or_else(bad)?;
+    let mask_end = px_end.checked_add(and_len).ok_or_else(bad)?;
+    let px = body.get(40..px_end).ok_or_else(bad)?;
+    let mask = body.get(px_end..mask_end).ok_or_else(bad)?;
+    // Pixels are bottom-up BGRA; the mask (MSB first) clears transparent pixels.
+    // Output runs top-down RGBA.
+    let mut rgba = Vec::with_capacity(total);
+    for out_y in 0..height as usize {
+        let buf_y = height as usize - 1 - out_y;
+        for x in 0..width as usize {
+            let p = px.get(buf_y * stride + x * 4..buf_y * stride + x * 4 + 4).ok_or_else(bad)?;
+            let transparent = mask.get(buf_y * and_stride + x / 8).is_some_and(|m| m & (0x80 >> (x % 8)) != 0);
+            rgba.extend_from_slice(if transparent { &[0, 0, 0, 0] } else { &[p[2], p[1], p[0], p[3]] });
+        }
+    }
+    Ok((width, height, rgba))
+}
+
 impl PdfCraftApp {
-    /// Take a picked PNG file as the window and taskbar icon (desktop only).
+    /// Take a picked icon file (PNG, or ICO with PNG or 32-bit entries) as the
+    /// window and taskbar icon (desktop only).
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn set_custom_icon(&mut self, path: std::path::PathBuf) {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         match std::fs::read(&path) {
-            Ok(bytes) => match icon_png_dims(&bytes) {
+            Ok(bytes) => match decode_icon_file(&bytes) {
                 Ok(_) => {
                     self.custom_icon_path = Some(path.to_string_lossy().into_owned());
                 }
@@ -397,9 +501,9 @@ impl PdfCraftApp {
         let Some(path) = self.custom_icon_path.clone() else { return };
         let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let bytes = std::fs::read(&path).unwrap_or_default();
-        match icon_png_dims(&bytes).ok().and_then(|_| eframe::icon_data::from_png_bytes(&bytes).ok()) {
-            Some(icon) => ctx.send_viewport_cmd(egui::ViewportCommand::Icon(Some(std::sync::Arc::new(icon)))),
-            None => self.notify_fmt("Couldn't use {name} as the app icon", &[("name", &name)]),
+        match decode_icon_file(&bytes) {
+            Ok(icon) => ctx.send_viewport_cmd(egui::ViewportCommand::Icon(Some(std::sync::Arc::new(icon)))),
+            Err(e) => self.notify_fmt("Couldn't use {name} as the app icon: {e}", &[("name", &name), ("e", &e)]),
         }
     }
 }
@@ -429,5 +533,48 @@ mod tests {
         assert!(icon_png_dims(&png_head(0, 64)).is_err(), "empty dimension");
         assert!(icon_png_dims(&png_head(10_000, 10)).is_err(), "oversized dimension");
         assert!(icon_png_dims(&vec![0u8; MAX_ICON_BYTES + 1]).is_err(), "oversized file");
+    }
+
+    /// A minimal .ico: directory, one 2x2 32-bit entry (pixels plus mask), no CRCs anywhere.
+    fn ico_dib() -> Vec<u8> {
+        let px: [[u8; 4]; 4] = [[10, 20, 30, 255], [40, 50, 60, 255], [70, 80, 90, 255], [100, 110, 120, 255]];
+        let mut ico = vec![0, 0, 1, 0, 1, 0, 2, 2, 0, 0, 1, 0, 32, 0];
+        ico.extend_from_slice(&64u32.to_le_bytes());
+        ico.extend_from_slice(&22u32.to_le_bytes());
+        let mut info = 40u32.to_le_bytes().to_vec();
+        info.extend_from_slice(&2i32.to_le_bytes());
+        info.extend_from_slice(&4i32.to_le_bytes());
+        info.extend_from_slice(&1u16.to_le_bytes());
+        info.extend_from_slice(&32u16.to_le_bytes());
+        info.extend_from_slice(&[0u8; 16]);
+        let mut body = info;
+        // Bottom-up BGRA, then an empty (opaque) mask.
+        body.extend_from_slice(&px[2]);
+        body.extend_from_slice(&px[3]);
+        body.extend_from_slice(&px[0]);
+        body.extend_from_slice(&px[1]);
+        body.extend_from_slice(&[0u8; 8]);
+        assert_eq!(body.len(), 64);
+        ico.extend_from_slice(&body);
+        ico
+    }
+
+    #[test]
+    fn icon_files_decode_dib_entries_top_down_rgba() {
+        let (w, h, rgba) = decode_icon_file(&ico_dib()).expect("2x2 direct color decodes");
+        assert_eq!((w, h), (2, 2));
+        // Top row first, BGRA flipped to RGBA, opaque mask kept.
+        assert_eq!(rgba, vec![30, 20, 10, 255, 60, 50, 40, 255, 90, 80, 70, 255, 120, 110, 100, 255]);
+    }
+
+    #[test]
+    fn icon_files_reject_garbage() {
+        assert!(decode_icon_file(b"hello").is_err());
+        assert!(decode_icon_file(&[0, 0, 1, 0]).is_err(), "truncated directory");
+        assert!(decode_icon_file(&vec![0u8; MAX_ICON_BYTES + 1]).is_err(), "oversized file");
+        // PNG magic with a corrupt body fails cleanly (no real PNG is embedded here).
+        let mut bad = b"\x89PNG\r\n\x1a\n".to_vec();
+        bad.extend_from_slice(&[0u8; 32]);
+        assert!(decode_icon_file(&bad).is_err());
     }
 }

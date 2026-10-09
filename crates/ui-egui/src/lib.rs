@@ -463,10 +463,6 @@ pub struct PdfCraftApp {
     pub combine_draft: Vec<combine_ui::CombineFile>,
     /// Combine files: first-page thumbnails by file id (grid view).
     pub combine_thumbs: std::collections::HashMap<u64, egui::TextureHandle>,
-    /// Combine files: the file being previewed from the grid, if any.
-    pub combine_preview: Option<u64>,
-    /// The preview's rendered page: file id, texture and height/width aspect.
-    pub combine_preview_tex: Option<(u64, egui::TextureHandle, f32)>,
     /// The Combine files tab: whether it is open, shown, its selection and undo history.
     pub combine_tab: combine_ui::CombineTab,
     /// The Combine files table's column order and widths (kept in the settings).
@@ -690,8 +686,6 @@ impl PdfCraftApp {
             space_audit: Vec::new(),
             combine_draft: Vec::new(),
             combine_thumbs: Default::default(),
-            combine_preview: None,
-            combine_preview_tex: None,
             combine_tab: Default::default(),
             combine_columns: Default::default(),
             image_import: None,
