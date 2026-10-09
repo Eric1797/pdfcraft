@@ -1605,14 +1605,14 @@ fn grid(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) -> Option<RowActio
                 let tex = app.combine_thumbs.get(&id).cloned();
                 let selected = app.combine_tab.selected.contains(&id);
                 let hint = app.combine_tab.drag.is_some_and(|(_, hover)| hover == Some(i));
-                let resp = file_card(ui, t, &name, pages, tex.as_ref(), selected, locked, hint);
+                let resp = file_card(ui, t, Card { name: &name, pages, tex: tex.as_ref(), selected, locked, hint });
                 if resp.drag_started() {
                     app.combine_tab.drag = Some((i, None));
                 }
-                if app.combine_tab.drag.is_some() && resp.hovered() {
-                    if let Some(drag) = app.combine_tab.drag.as_mut() {
-                        drag.1 = Some(i);
-                    }
+                if resp.hovered()
+                    && let Some(drag) = app.combine_tab.drag.as_mut()
+                {
+                    drag.1 = Some(i);
                 }
                 if resp.double_clicked() {
                     let (name, bytes) = {
@@ -1630,13 +1630,13 @@ fn grid(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) -> Option<RowActio
         });
     });
     // A finished drag reorders, like dropping table rows.
-    if let Some((from, hover)) = app.combine_tab.drag {
-        if !ui.input(|i| i.pointer.primary_down()) {
-            app.combine_tab.drag = None;
-            let to = hover.unwrap_or(app.combine_draft.len().saturating_sub(1));
-            if to != from {
-                action = Some(RowAction::Drop { from, to });
-            }
+    if let Some((from, hover)) = app.combine_tab.drag
+        && !ui.input(|i| i.pointer.primary_down())
+    {
+        app.combine_tab.drag = None;
+        let to = hover.unwrap_or(app.combine_draft.len().saturating_sub(1));
+        if to != from {
+            action = Some(RowAction::Drop { from, to });
         }
     }
     action
@@ -1645,16 +1645,17 @@ fn grid(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) -> Option<RowActio
 /// One grid card: stacked-pages look, thumbnail or lock placeholder, name and page count.
 /// Returns the card response (click selects, double-click opens, drag reorders); `hint`
 /// outlines the drop target while dragging.
-fn file_card(
-    ui: &mut egui::Ui,
-    t: &Tokens,
-    name: &str,
+struct Card<'a> {
+    name: &'a str,
     pages: usize,
-    tex: Option<&egui::TextureHandle>,
+    tex: Option<&'a egui::TextureHandle>,
     selected: bool,
     locked: bool,
     hint: bool,
-) -> egui::Response {
+}
+
+fn file_card(ui: &mut egui::Ui, t: &Tokens, card: Card<'_>) -> egui::Response {
+    let Card { name, pages, tex, selected, locked, hint } = card;
     const W: f32 = 150.0;
     const H: f32 = 190.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(W, H + 46.0), Sense::click());

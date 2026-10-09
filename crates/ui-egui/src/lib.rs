@@ -91,8 +91,6 @@ pub mod i18n;
 pub(crate) const MAX_AUTHOR_CHARS: usize = 200;
 /// Longest custom program name kept (Preferences ▸ Customize program).
 pub(crate) const MAX_CUSTOM_NAME_CHARS: usize = 64;
-/// Longest custom icon path kept (a file path, never the image itself).
-pub(crate) const MAX_ICON_PATH_CHARS: usize = 1024;
 pub mod portable;
 mod protect;
 mod recovery;
@@ -374,10 +372,6 @@ pub struct PdfCraftApp {
     pub language: String,
     /// Customize program: window and taskbar title override (empty keeps PdfCraft).
     pub custom_name: String,
-    /// Customize program: PNG file used for the window and taskbar icon (None keeps built-in).
-    pub custom_icon_path: Option<String>,
-    /// Which icon path was last attempted, so a missing file notifies once, not every frame.
-    pub(crate) custom_icon_applied: Option<String>,
     pub dialog: Option<Dialog>,
     /// How to ask for the latest release (the desktop app sets it; see `updates`).
     pub update_source: Option<updates::UpdateSource>,
@@ -630,8 +624,6 @@ impl PdfCraftApp {
             theme_preference: ThemePreference::Light,
             language: i18n::AUTO.to_string(),
             custom_name: String::new(),
-            custom_icon_path: None,
-            custom_icon_applied: None,
             dialog: None,
             update_source: None,
             updates: updates::Updates::default(),
@@ -1225,7 +1217,6 @@ impl PdfCraftApp {
             "highlight_fields": self.view_defaults.highlight_fields,
             "language": self.language,
             "custom_name": self.custom_name.trim().chars().take(MAX_CUSTOM_NAME_CHARS).collect::<String>(),
-            "custom_icon": self.custom_icon_path,
             "author": self.comment_prefs.author,
             // Drawn signatures keep their original form (older settings read the same).
             "signature": match &self.signature { Some(fill_sign::SavedSig::Drawn(s)) => Some(s), _ => None },
@@ -1274,9 +1265,6 @@ impl PdfCraftApp {
         }
         if let Some(name) = v["custom_name"].as_str().map(str::trim).filter(|n| !n.is_empty()) {
             self.custom_name = name.chars().take(MAX_CUSTOM_NAME_CHARS).collect();
-        }
-        if let Some(path) = v["custom_icon"].as_str().map(str::trim).filter(|p| !p.is_empty()) {
-            self.custom_icon_path = Some(path.chars().take(MAX_ICON_PATH_CHARS).collect());
         }
         // An empty or missing name keeps the login-name default; settings are untrusted, so the
         // name is cut to a sane length.
@@ -1694,9 +1682,6 @@ impl eframe::App for PdfCraftApp {
                 self.stage_handoff(request);
             }
         }
-        // Customize program: a changed icon path takes effect (or reports why not).
-        #[cfg(not(target_arch = "wasm32"))]
-        self.apply_custom_icon(ctx);
         self.guard_quit(ctx);
         let now = ctx.input(|i| i.time);
         self.autosave_tick(now);
