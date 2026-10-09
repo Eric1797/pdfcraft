@@ -256,6 +256,20 @@ fn insert_blank_page_after_selection() {
 }
 
 #[test]
+fn trailing_gap_inserts_a_blank_page() {
+    let mut h = organize(2);
+    h.get_by_label("Insert a file at the end").click();
+    h.run_steps(2);
+    // The gap menu reuses the toolbar's labels; the popup's item renders last.
+    h.get_all_by_label("Insert a blank page after the selection").last().unwrap().click();
+    h.run_steps(3);
+    assert_eq!(page_texts(h.state()), ["Page 1", "Page 2", ""]);
+    let app = h.state();
+    let info = &app.session.get(app.views[0].id).unwrap().info;
+    assert_eq!((info.pages[2].width, info.pages[2].height), (200.0, 300.0), "matches the last page");
+}
+
+#[test]
 fn save_writes_an_incremental_update_and_clears_dirty() {
     let out = temp_path("saved.pdf");
     let original = fixture(3);
@@ -1049,6 +1063,9 @@ fn plus_between_pages_inserts_picked_files_there_in_order() {
     h.get_by_label("Insert a file before page 1").click();
     h.run_steps(4);
     h.get_by_label("Insert a file at the end").click();
+    h.run_steps(2);
+    // The trailing gap offers files or a blank page; the popup's item renders last.
+    h.get_all_by_label("Insert pages from a file…").last().unwrap().click();
     h.run_steps(4);
     assert_eq!(texts_of(h.state(), 0), ["a note", "Page 1", "Page 2", "Page 3", "a note"]);
     // The toolbar button still inserts after the selection, not at the last "+" used.
