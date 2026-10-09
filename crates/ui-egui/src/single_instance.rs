@@ -205,7 +205,9 @@ fn parse(line: &[u8]) -> Option<HandoffRequest> {
 /// starter (wait briefly) or a crashed primary (taken over, at once when long stale).
 fn forward(dir: &Path, req: &HandoffRequest) -> bool {
     if let Some(lock) = read_lock(&dir.join(LOCK_NAME))
-        && lock.port != 0 && try_forward(lock.port, req) {
+        && lock.port != 0
+        && try_forward(lock.port, req)
+    {
         return true;
     }
     for _ in 0..SLOW_ATTEMPTS {
