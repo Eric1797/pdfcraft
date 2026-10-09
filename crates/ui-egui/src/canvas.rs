@@ -2676,8 +2676,9 @@ fn drop_gap(cells: &[(usize, Rect)], p: Pos2) -> Option<usize> {
     Some(if p.x < r.center().x { *i } else { i + 1 })
 }
 
-/// A "+" on a gap of the page grid: insert files there. Returns whether it was clicked.
-fn gap_button(ui: &mut egui::Ui, gap: usize, at: Pos2, height: f32, label: String, t: &Tokens) -> bool {
+/// A "+" on a gap of the page grid: insert files there. Returns the button's response,
+// so callers can either act on the click or anchor a menu of gap choices on it.
+fn gap_button(ui: &mut egui::Ui, gap: usize, at: Pos2, height: f32, label: String, t: &Tokens) -> egui::Response {
     let resp = ui.interact(Rect::from_center_size(at, Vec2::splat(22.0)), ui.id().with(("org-gap", gap)), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label.clone()));
     let hot = resp.hovered();
@@ -2688,7 +2689,7 @@ fn gap_button(ui: &mut egui::Ui, gap: usize, at: Pos2, height: f32, label: Strin
     let ink = Stroke::new(1.5, if hot { Color32::WHITE } else { t.text_muted });
     ui.painter().line_segment([at - vec2(4.0, 0.0), at + vec2(4.0, 0.0)], ink);
     ui.painter().line_segment([at - vec2(0.0, 4.0), at + vec2(0.0, 4.0)], ink);
-    resp.on_hover_text(label).clicked()
+    resp.on_hover_text(label)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2808,14 +2809,29 @@ fn organize_grid(
                     .get(*i)
                     .map(|p| crate::i18n::fmt(tl!("Insert a file before page {label}"), &[("label", &p.label)]))
                     .unwrap_or_default();
-                if gap_button(ui, *i, pos2(c.left(), mid(c)), cell.y - 56.0, label, t) {
+                if gap_button(ui, *i, pos2(c.left(), mid(c)), cell.y - 56.0, label, t).clicked() {
                     view.pending_action = Some(ViewAction::InsertFromFileAt(*i));
                 }
             }
-            if let Some((i, c)) = cells.last()
-                && gap_button(ui, i + 1, pos2(c.right(), mid(c)), cell.y - 56.0, tl!("Insert a file at the end").to_string(), t)
-            {
-                view.pending_action = Some(ViewAction::InsertFromFileAt(i + 1));
+            // The trailing gap also offers a blank page (sized like the last page), so an
+            // empty page can be appended without going through the toolbar.
+            if let Some((i, c)) = cells.last() {
+                let at = i + 1;
+                let gap = gap_button(ui, at, pos2(c.right(), mid(c)), cell.y - 56.0, tl!("Insert a file at the end").to_string(), t);
+                egui::Popup::menu(&gap).show(|ui| {
+                    if ui.button(tl!("Insert pages from a file…")).clicked() {
+                        view.pending_action = Some(ViewAction::InsertFromFileAt(at));
+                        ui.close();
+                    }
+                    if ui.button(tl!("Insert a blank page after the selection")).clicked() {
+                        if let Some(neighbour) = info.pages.last() {
+                            let page = neighbour.crop;
+                            let (w, h) = ((page[2] - page[0]).abs().max(1.0) as f64, (page[3] - page[1]).abs().max(1.0) as f64);
+                            view.pending_edit = Some(Edit::InsertBlankPage { at, width: w, height: h });
+                        }
+                        ui.close();
+                    }
+                });
             }
         }
         // While dragging: the gap the pages would go to, drawn as a bar.

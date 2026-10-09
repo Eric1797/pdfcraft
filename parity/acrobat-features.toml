@@ -2626,8 +2626,8 @@ milestone = "M4"
 status = "shipped"
 commands = ["page.insert_blank"]
 tools = ["page_insert_blank"]
-evidence = ["crates/organize/src/tests.rs::inserts_blank_page", "crates/ui-egui/tests/editing.rs::insert_blank_page_after_selection", "crates/engine/src/tests.rs::insert_blank_between_pages_keeps_both_neighbours"]
-notes = ""
+evidence = ["crates/organize/src/tests.rs::inserts_blank_page", "crates/ui-egui/tests/editing.rs::insert_blank_page_after_selection", "crates/ui-egui/tests/editing.rs::trailing_gap_inserts_a_blank_page", "crates/engine/src/tests.rs::insert_blank_between_pages_keeps_both_neighbours"]
+notes = "toolbar button (after the selection, sized like it) and the trailing + gap in Organize Pages (menu: files or a blank page sized like the last page)"
 
 [[feature]]
 id = "organize.insert-from-file"
