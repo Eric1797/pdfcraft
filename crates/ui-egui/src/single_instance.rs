@@ -222,7 +222,7 @@ fn forward(dir: &Path, req: &HandoffRequest) -> bool {
                     return false;
                 }
             }
-            Some(_) => {} // a starter is mid-flight; wait for its port
+            Some(_) => {}         // a starter is mid-flight; wait for its port
             None => return false, // missing or garbage: take it
         }
         std::thread::sleep(SLOW_WAIT);
