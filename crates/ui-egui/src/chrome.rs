@@ -538,7 +538,7 @@ pub fn resize_edges(app: &mut PdfCraftApp, ctx: &egui::Context) {
         }
         return;
     }
-    let screen = ctx.screen_rect();
+    let screen = ctx.viewport_rect();
     let zones = [
         (ResizeEdge::BottomLeft, Rect::from_min_size(pos2(0.0, screen.max.y - 14.0), vec2(14.0, 14.0)), CursorIcon::ResizeNeSw),
         (ResizeEdge::BottomRight, Rect::from_min_size(pos2(screen.max.x - 14.0, screen.max.y - 14.0), vec2(14.0, 14.0)), CursorIcon::ResizeNwSe),
