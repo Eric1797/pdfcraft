@@ -6,7 +6,7 @@ use pdfcraft_engine::catalog::{self, Availability, TOOL_GROUPS, ToolGroup};
 use pdfcraft_render::{DocInfo, FieldKind, OutlineItem};
 
 use crate::theme::{self, Tokens};
-use crate::{LeftPanel, PdfCraftApp, RightPanel, icons, widgets};
+use crate::{Dialog, LeftPanel, PdfCraftApp, RightPanel, icons, widgets};
 
 const COLLAPSED_TOOLS: usize = 14;
 
@@ -121,11 +121,7 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
     if let Availability::Planned(m) = g.availability {
         egui::Frame::NONE.fill(t.accent_soft).corner_radius(CornerRadius::same(8)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(
-                egui::RichText::new(format!("{} {m}. {}", tl!("Coming in milestone"), tl!("Items marked Ready work today.")))
-                    .color(t.text)
-                    .font(theme::regular(12.0)),
-            );
+            ui.label(egui::RichText::new(format!("{} {m}.", tl!("Coming in milestone"))).color(t.text).font(theme::regular(12.0)));
         });
     }
     if g.id == "measure" {
@@ -156,17 +152,36 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
         format_section(app, ui, t);
     }
     let mut run = None;
+    let mut show_prefs = false;
     // Redact a PDF has Acrobat's footer: Clear all / Redact all.
     let footer = g.id == "redact";
     let marks = if footer { app.active_ids().and_then(|(_, id)| app.session.get(id)).map_or(0, |d| d.redaction_marks()) } else { 0 };
     let list_h = if footer { (ui.available_height() - 52.0).max(80.0) } else { ui.available_height() };
+    // Unfinished tools stay out of the list unless Preferences shows them; finished tools
+    // carry no chip at all.
+    let show_all = app.show_planned_tools;
+    let mut hidden = 0;
     egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(list_h).show(ui, |ui| {
         for s in g.sections {
+            let visible: Vec<_> = s
+                .items
+                .iter()
+                .filter(|item| {
+                    if g.id == "fill_sign" && (item.command.starts_with("sign.fill.signature") || item.command.starts_with("sign.fill.initials")) {
+                        return false;
+                    }
+                    if !show_all && item.availability != Availability::Ready {
+                        hidden += 1;
+                        return false;
+                    }
+                    true
+                })
+                .collect();
+            if visible.is_empty() {
+                continue;
+            }
             widgets::section_title(ui, tl!(s.title));
-            for item in s.items {
-                if g.id == "fill_sign" && (item.command.starts_with("sign.fill.signature") || item.command.starts_with("sign.fill.initials")) {
-                    continue;
-                }
+            for item in visible {
                 let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tl!(item.label)));
                 let ready = item.availability == Availability::Ready;
@@ -182,16 +197,19 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
                     if ready { hue(g) } else { t.text_faint },
                 );
                 ui.painter().text(rect.left_center() + vec2(34.0, 0.0), Align2::LEFT_CENTER, tl!(item.label), theme::regular(13.0), fg);
-                let (chip, fill, cfg) = match item.availability {
-                    Availability::Ready => (tl!("Ready"), Color32::from_rgb(0xDD, 0xF3, 0xE4), Color32::from_rgb(0x1E, 0x7B, 0x43)),
-                    Availability::Planned(m) => (m, t.pressed, t.text_muted),
-                    Availability::Provider => ("AI", t.pressed, t.text_muted),
+                // Only unfinished tools get a chip, and only while they are shown at all.
+                let chip: Option<(&str, Color32, Color32)> = match item.availability {
+                    Availability::Ready => None,
+                    Availability::Planned(m) => Some((m, t.pressed, t.text_muted)),
+                    Availability::Provider => Some(("AI", t.pressed, t.text_muted)),
                 };
-                let font = theme::semibold(9.5);
-                let w = ui.fonts_mut(|f| f.layout_no_wrap(tl!(chip).to_string(), font.clone(), cfg).size().x);
-                let r = Rect::from_center_size(rect.right_center() - vec2(w / 2.0 + 10.0, 0.0), vec2(w + 10.0, 16.0));
-                ui.painter().rect_filled(r, CornerRadius::same(4), fill);
-                ui.painter().text(r.center(), Align2::CENTER_CENTER, tl!(chip), font, cfg);
+                if let Some((chip, fill, cfg)) = chip {
+                    let font = theme::semibold(9.5);
+                    let w = ui.fonts_mut(|f| f.layout_no_wrap(tl!(chip).to_string(), font.clone(), cfg).size().x);
+                    let r = Rect::from_center_size(rect.right_center() - vec2(w / 2.0 + 10.0, 0.0), vec2(w + 10.0, 16.0));
+                    ui.painter().rect_filled(r, CornerRadius::same(4), fill);
+                    ui.painter().text(r.center(), Align2::CENTER_CENTER, tl!(chip), font, cfg);
+                }
                 if resp.on_hover_text(item.command).clicked() {
                     run = Some(item.command);
                 }
@@ -201,6 +219,24 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
             widgets::section_title(ui, tl!("Sign yourself"));
             if let Some(cmd) = crate::fill_sign::signature_entries(ui, app, t) {
                 run = Some(cmd);
+            }
+        }
+        if hidden > 0 {
+            ui.add_space(8.0);
+            let note = if hidden == 1 {
+                tl!("1 planned tool is hidden").to_string()
+            } else {
+                crate::i18n::fmt(tl!("{n} planned tools are hidden"), &[("n", &hidden.to_string())])
+            };
+            ui.label(egui::RichText::new(note).small().color(t.text_faint));
+            if ui
+                .add(
+                    egui::Label::new(egui::RichText::new(tl!("Show in Preferences")).color(t.accent_text).font(theme::medium(12.0)))
+                        .sense(Sense::click()),
+                )
+                .clicked()
+            {
+                show_prefs = true;
             }
         }
     });
@@ -226,6 +262,9 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
                 }
             });
         });
+    }
+    if show_prefs {
+        app.dialog = Some(Dialog::Preferences);
     }
     if let Some(cmd) = run {
         app.run_command(cmd);

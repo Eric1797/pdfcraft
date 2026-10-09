@@ -17,8 +17,10 @@ pub fn mode_tab(ui: &mut egui::Ui, label: &str, active: bool) -> Response {
     }
     ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, font, if active { t.text } else { t.text_muted });
     if active {
-        let r = Rect::from_min_max(rect.left_bottom() + vec2(11.0, -3.0), rect.right_bottom() - vec2(11.0, 0.0));
-        ui.painter().rect_filled(r, CornerRadius::same(1), t.text);
+        // One solid bar across the whole tab, just above its bottom edge (a rounded or
+        // inset bar reads as two dashes).
+        let r = Rect::from_min_max(rect.left_bottom() - vec2(0.0, 4.0), rect.right_bottom() - vec2(0.0, 1.0));
+        ui.painter().rect_filled(r, CornerRadius::ZERO, t.text);
     }
     resp
 }

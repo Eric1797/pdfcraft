@@ -9,7 +9,8 @@
 //! `--page N  --zoom 150  --layout continuous|two-up|single  --panel comments|bookmarks|pages|fields|layers|attachments|none
 //!  --theme light|dark|system  --language auto|<code>  --mode all|read|edit|convert|sign  --tool <catalogue id>  --left open|closed
 //!  --organize on  --fields on  --dialog properties|shortcuts|about  --palette <query>  --home on
-//!  --cover on|off  --default-layout continuous|two-up|single  --default-zoom fit-width|fit-page|<percent>`
+//!  --cover on|off  --default-layout continuous|two-up|single  --default-zoom fit-width|fit-page|<percent>
+//!  --show-planned-tools on|off  --show-community on|off`
 //!
 //! `--control <file>` enables the UI control channel (off by default): the app listens on a random
 //! loopback port and writes `{"port", "token", "pid"}` to `<file>` (owner-only permissions).
@@ -168,6 +169,14 @@ fn main() -> eframe::Result {
     }
     if integrated {
         viewport = viewport.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false);
+    }
+    // Revisioned (#6): on Windows the menu bar, tabs and window buttons share one custom
+    // title bar (Adobe-style layout, our own icons), so the native title bar goes. Drag,
+    // buttons, snapping shortcuts and manual edge resize are drawn by the app
+    // (crates/ui-egui/src/chrome.rs); other platforms keep their native chrome.
+    #[cfg(target_os = "windows")]
+    {
+        viewport = viewport.with_decorations(false);
     }
     migrate_legacy_folders();
     // The log file lives in the settings folder; opened after the arguments (so `--version` leaves

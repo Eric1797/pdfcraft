@@ -304,6 +304,18 @@ pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
             .labelled_by(label.id);
     });
     ui.add_space(8.0);
+    ui.label(egui::RichText::new(tl!("Customize program")).font(theme::semibold(13.0)));
+    ui.horizontal(|ui| {
+        let label = ui.label(tl!("App name"));
+        ui.add(egui::TextEdit::singleline(&mut app.custom_name).desired_width(220.0).char_limit(crate::MAX_CUSTOM_NAME_CHARS)).labelled_by(label.id);
+    });
+    ui.label(egui::RichText::new(tl!("Window and taskbar title; empty keeps PdfCraft.")).small().color(t.text_muted));
+    ui.add_space(8.0);
+    ui.label(egui::RichText::new(tl!("Tools and Home")).font(theme::semibold(13.0)));
+    ui.checkbox(&mut app.show_planned_tools, tl!("Show planned and provider tools"));
+    ui.checkbox(&mut app.show_community, tl!("Show the ArtCraft community box on Home"));
+    ui.label(egui::RichText::new(tl!("Unfinished tools stay hidden from the tool panel and the palette until shown.")).small().color(t.text_muted));
+    ui.add_space(8.0);
     ui.label(egui::RichText::new("JavaScript").font(theme::semibold(13.0)));
     egui::Frame::new().fill(t.hover).corner_radius(egui::CornerRadius::same(6)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
         ui.set_width(ui.available_width());

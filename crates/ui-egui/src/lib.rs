@@ -89,6 +89,8 @@ pub mod i18n;
 
 /// The longest author name kept (Preferences ▸ Identity, restored settings).
 pub(crate) const MAX_AUTHOR_CHARS: usize = 200;
+/// Longest custom program name kept (Preferences ▸ Customize program).
+pub(crate) const MAX_CUSTOM_NAME_CHARS: usize = 64;
 pub mod portable;
 mod protect;
 mod recovery;
@@ -368,6 +370,13 @@ pub struct PdfCraftApp {
     pub theme_preference: ThemePreference,
     /// Interface language preference: `auto` (follow the system) or a code from [`i18n::LANGUAGES`].
     pub language: String,
+    /// Customize program: window and taskbar title override (empty keeps PdfCraft).
+    pub custom_name: String,
+    /// Show tools whose catalogue availability is not Ready (Preferences ▸ Tools and Home).
+    /// Off by default: unfinished tools stay out of the tool panel and the palette.
+    pub show_planned_tools: bool,
+    /// Show the ArtCraft community card on Home (Preferences ▸ Tools and Home). Off by default.
+    pub show_community: bool,
     pub dialog: Option<Dialog>,
     /// How to ask for the latest release (the desktop app sets it; see `updates`).
     pub update_source: Option<updates::UpdateSource>,
@@ -451,6 +460,8 @@ pub struct PdfCraftApp {
     pub space_audit: Vec<pdfcraft_engine::optimize::SpaceUse>,
     /// Combine files: the files staged so far.
     pub combine_draft: Vec<combine_ui::CombineFile>,
+    /// Combine files: first-page thumbnails by file id (grid view).
+    pub combine_thumbs: std::collections::HashMap<u64, egui::TextureHandle>,
     /// The Combine files tab: whether it is open, shown, its selection and undo history.
     pub combine_tab: combine_ui::CombineTab,
     /// The Combine files table's column order and widths (kept in the settings).
@@ -505,6 +516,9 @@ pub struct PdfCraftApp {
     pub window_title: String,
     /// The UI control channel, when enabled (`--control`; off by default).
     control: Option<control::Control>,
+    /// Manual window-edge resize drag (Windows custom title bar only).
+    #[cfg(target_os = "windows")]
+    pub window_resize: Option<chrome::WindowResize>,
     /// Single-instance handoff listener (desktop only): later launches forward their files
     /// here instead of opening another window (#367).
     #[cfg(not(target_arch = "wasm32"))]
@@ -614,6 +628,9 @@ impl PdfCraftApp {
             theme: ThemeKind::Light,
             theme_preference: ThemePreference::Light,
             language: i18n::AUTO.to_string(),
+            custom_name: String::new(),
+            show_planned_tools: false,
+            show_community: false,
             dialog: None,
             update_source: None,
             updates: updates::Updates::default(),
@@ -667,6 +684,7 @@ impl PdfCraftApp {
             cert_viewer: None,
             space_audit: Vec::new(),
             combine_draft: Vec::new(),
+            combine_thumbs: Default::default(),
             combine_tab: Default::default(),
             combine_columns: Default::default(),
             image_import: None,
@@ -697,6 +715,8 @@ impl PdfCraftApp {
             fonts_ready: false,
             fonts_hans: false,
             control: None,
+            #[cfg(target_os = "windows")]
+            window_resize: None,
             #[cfg(not(target_arch = "wasm32"))]
             handoff: None,
             bookmark_rename: None,
@@ -823,7 +843,7 @@ impl PdfCraftApp {
         if let Some(p) = path {
             self.recent.retain(|r| r.path != p);
             self.recent.insert(0, RecentFile { name: name.to_string(), path: p, pages, size });
-            self.recent.truncate(12);
+            self.recent.truncate(10);
         }
         // What the form's scripts said while it opened (messages, errors) shows now, not with
         // the next edit.
@@ -1203,6 +1223,9 @@ impl PdfCraftApp {
             "default_zoom": self.view_defaults.zoom_name(),
             "highlight_fields": self.view_defaults.highlight_fields,
             "language": self.language,
+            "custom_name": self.custom_name.trim().chars().take(MAX_CUSTOM_NAME_CHARS).collect::<String>(),
+            "show_planned_tools": self.show_planned_tools,
+            "show_community": self.show_community,
             "author": self.comment_prefs.author,
             // Drawn signatures keep their original form (older settings read the same).
             "signature": match &self.signature { Some(fill_sign::SavedSig::Drawn(s)) => Some(s), _ => None },
@@ -1248,6 +1271,15 @@ impl PdfCraftApp {
         }
         if let Some(language) = v["language"].as_str().and_then(i18n::normalize_pref) {
             self.language = language.to_string();
+        }
+        if let Some(name) = v["custom_name"].as_str().map(str::trim).filter(|n| !n.is_empty()) {
+            self.custom_name = name.chars().take(MAX_CUSTOM_NAME_CHARS).collect();
+        }
+        if let Some(on) = v["show_planned_tools"].as_bool() {
+            self.show_planned_tools = on;
+        }
+        if let Some(on) = v["show_community"].as_bool() {
+            self.show_community = on;
         }
         // An empty or missing name keeps the login-name default; settings are untrusted, so the
         // name is cut to a sane length.
@@ -1340,6 +1372,20 @@ impl PdfCraftApp {
             }
             ("left", _) => self.left_open = value != "closed",
             ("home", _) => self.active = None,
+            ("show-planned-tools", _) => {
+                self.show_planned_tools = match value {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err("show-planned-tools must be on or off".into()),
+                };
+            }
+            ("show-community", _) => {
+                self.show_community = match value {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err("show-community must be on or off".into()),
+                };
+            }
             ("dialog", _) => {
                 self.dialog = match value {
                     "properties" => Some(Dialog::Properties(PropsTab::Description)),
@@ -1699,6 +1745,10 @@ impl eframe::App for PdfCraftApp {
         self.process_picked();
         // Pull finished renders into textures for every open document.
         for view in &mut self.views {
+            let now = ctx.input(|i| i.time);
+            if view.advance_zoom(now) {
+                ctx.request_repaint();
+            }
             if let Some(doc) = self.session.get(view.id) {
                 view.receive(ctx, &doc.renderer);
             }
@@ -1714,12 +1764,15 @@ impl eframe::App for PdfCraftApp {
             return;
         }
         // The window shows the active document's name (or title, if it asks for that).
+        // Customize program: the window and taskbar title (empty keeps PdfCraft).
+        let brand = self.custom_name.trim();
+        let brand = if brand.is_empty() { "PdfCraft".to_owned() } else { brand.chars().take(MAX_CUSTOM_NAME_CHARS).collect::<String>() };
         let title = self
             .active
             .and_then(|i| self.session.get(self.views[i].id))
             .map(|d| d.display_name())
             .or_else(|| self.combine_showing().then(|| tl!("Combine files").to_owned()))
-            .map_or_else(|| "PdfCraft".to_owned(), |name| format!("{name} — PdfCraft"));
+            .map_or_else(|| brand.clone(), |name| format!("{name} — {brand}"));
         if title != self.window_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.window_title = title;
@@ -1763,5 +1816,8 @@ impl eframe::App for PdfCraftApp {
         dialogs::show(self, &ctx);
         self.show_progress(&ctx);
         widgets::toast(self, &ctx);
+        // Manual edge resize above everything (Windows custom title bar only).
+        #[cfg(target_os = "windows")]
+        chrome::resize_edges(self, &ctx);
     }
 }

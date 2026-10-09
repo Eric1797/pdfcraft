@@ -2,7 +2,7 @@
 //! save/save-as, the unsaved-changes prompt and editable document properties.
 
 use egui::accesskit::Role;
-use egui::{Key, Modifiers};
+use egui::{Event, Key, Modifiers, PointerButton};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use pdfcraft_render::{PageRenderer, RenderRequest, RequestKind};
@@ -640,6 +640,75 @@ fn combine_paths_from_the_shell_stage_in_order() {
     assert_eq!(app.combine_draft.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["a.pdf", "b.pdf"]);
     assert_eq!(app.combine_draft.iter().map(|f| f.pages).collect::<Vec<_>>(), [2, 1]);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn combine_grid_single_click_selects_and_double_click_opens() {
+    let mut h = harness(1, |app| {
+        app.use_files(
+            pdfcraft_ui_egui::FilePurpose::Combine,
+            vec![("one.pdf".into(), fixture(2)), ("two.pdf".into(), fixture(1)), ("secret.pdf".into(), protected("pw", "owner", -1))],
+        );
+    });
+    h.run_steps(3);
+    h.state_mut().combine_columns.grid = true;
+    h.run_steps(3);
+    // Readable files render thumbs; the locked one shows its lock instead.
+    assert_eq!(h.state().combine_thumbs.len(), 2);
+    // Single click selects without opening anything.
+    h.get_by_label("one.pdf").click();
+    h.run_steps(3);
+    assert_eq!(h.state().combine_selection(), vec![0]);
+    assert_eq!(h.state().views.len(), 1, "single click opens nothing");
+    // Double click opens the file in a tab.
+    double_click(&mut h, h.get_by_label("two.pdf").rect().center());
+    h.run_steps(3);
+    assert_eq!(h.state().views.len(), 2, "double click opens the file");
+}
+
+/// Press and release twice at the same spot, inside egui's double-click window.
+fn double_click(h: &mut Harness<'static, PdfCraftApp>, at: egui::Pos2) {
+    for _ in 0..2 {
+        h.event(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        h.event(Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+}
+
+#[test]
+fn combine_grid_cards_drag_to_reorder() {
+    let mut h = harness(1, |app| {
+        app.use_files(
+            pdfcraft_ui_egui::FilePurpose::Combine,
+            vec![("one.pdf".into(), fixture(1)), ("two.pdf".into(), fixture(1)), ("three.pdf".into(), fixture(1))],
+        );
+    });
+    h.run_steps(3);
+    h.state_mut().combine_columns.grid = true;
+    h.run_steps(3);
+    let from = h.get_by_label("one.pdf").rect().center();
+    let onto = h.get_by_label("three.pdf").rect().center();
+    h.hover_at(from);
+    h.run_steps(1);
+    h.drag_at(from);
+    h.run_steps(1);
+    h.hover_at(onto);
+    h.run_steps(2);
+    h.drop_at(onto);
+    h.run_steps(3);
+    let names: Vec<_> = h.state().combine_draft.iter().map(|f| f.name.clone()).collect();
+    assert_eq!(names, ["two.pdf", "three.pdf", "one.pdf"], "the dragged file moves with the selection");
+}
+
+#[test]
+fn combine_grid_view_persists() {
+    let mut h = harness(1, |_| {});
+    h.state_mut().combine_columns.grid = true;
+    let saved = h.state().persist();
+    let mut restored = harness(1, |_| {});
+    restored.state_mut().restore(&saved);
+    assert!(restored.state().combine_columns.grid);
 }
 
 #[test]
