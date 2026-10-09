@@ -18,7 +18,7 @@ fn harness(setup: impl FnOnce(&mut PdfCraftApp) + 'static) -> Harness<'static, P
 
 #[test]
 fn discord_link_on_the_home_screen_opens_discord() {
-    let mut h = harness(|_| {});
+    let mut h = harness(|app| app.show_community = true);
     h.get_by_label("Join our Discord").click();
     h.run_steps(2);
     assert_eq!(h.state().last_opened_url.as_deref(), Some(links::DISCORD));
@@ -33,7 +33,7 @@ fn home_screen_links() {
         ("PdfCraft on GitHub", "https://github.com/storytold/pdfcraft"),
         ("ArtCraft website", "https://getartcraft.com"),
     ] {
-        let mut h = harness(|_| {});
+        let mut h = harness(|app| app.show_community = true);
         h.get_by_label("Join the ArtCraft community");
         h.get_by_label(label).click();
         h.run_steps(2);

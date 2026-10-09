@@ -477,3 +477,58 @@ fn opening_a_pdf_keeps_a_closed_left_panel_and_the_chosen_tool() {
     assert_eq!(app.mode, Mode::AllTools);
     assert_eq!(app.left, LeftPanel::Tool("export"));
 }
+
+/// Unfinished catalogue tools stay out of the tool panel until Preferences shows them, and
+/// finished tools carry no availability chip.
+#[test]
+fn unfinished_tools_are_hidden_until_preferences_show_them() {
+    use pdfcraft_ui_egui::LeftPanel;
+    let mut h = harness(|app| app.left = LeftPanel::Tool("standards"));
+    h.run_steps(2);
+    assert!(h.query_all_by_label("Save as PDF/A").count() >= 1, "finished tools are listed");
+    assert!(h.query_all_by_label("Save as PDF/X").count() == 0, "planned tools are hidden");
+    h.get_by_label("3 planned tools are hidden");
+    h.get_by_label("Show in Preferences").click();
+    h.run_steps(2);
+    assert_eq!(h.state().dialog, Some(pdfcraft_ui_egui::Dialog::Preferences), "the footer note opens Preferences");
+    h.state_mut().dialog = None;
+    h.state_mut().show_planned_tools = true;
+    h.run_steps(2);
+    assert!(h.query_all_by_label("Save as PDF/X").count() >= 1, "opted-in planned tools are listed");
+    assert!(h.query_all_by_label("Show in Preferences").count() == 0, "no hidden note once shown");
+}
+
+/// The Home community card is opt-in from Preferences.
+#[test]
+fn the_community_card_is_opt_in() {
+    let h = harness(|_| {});
+    assert!(h.query_all_by_label("Join the ArtCraft community").count() == 0, "hidden by default");
+    let h = harness(|app| app.show_community = true);
+    h.get_by_label("Join the ArtCraft community");
+}
+
+/// The Tools and Home preferences persist and are settable as options.
+#[test]
+fn tools_and_home_preferences_persist_and_have_options() {
+    let mut app = PdfCraftApp::new();
+    assert!(!app.show_planned_tools && !app.show_community);
+    app.set_option("show-planned-tools", "on").unwrap();
+    app.set_option("show-community", "on").unwrap();
+    assert!(app.show_planned_tools && app.show_community);
+    assert!(app.set_option("show-planned-tools", "maybe").is_err());
+    assert!(app.set_option("show-community", "maybe").is_err());
+    let mut restored = PdfCraftApp::new();
+    restored.restore(&app.persist());
+    assert!(restored.show_planned_tools && restored.show_community, "remembered across restarts");
+}
+
+/// Recent files keep at most ten entries.
+#[test]
+fn recent_files_keep_at_most_ten() {
+    let mut app = PdfCraftApp::new();
+    for i in 0..12 {
+        app.open_bytes(&format!("d{i:02}.pdf"), Some(format!("/tmp/d{i:02}.pdf")), FIXTURE.to_vec()).expect("fixture opens");
+    }
+    assert_eq!(app.recent.len(), 10, "capped at ten");
+    assert_eq!(app.recent[0].name, "d11.pdf", "most recent first");
+}

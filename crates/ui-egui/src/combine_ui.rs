@@ -1658,7 +1658,9 @@ fn file_card(ui: &mut egui::Ui, t: &Tokens, card: Card<'_>) -> egui::Response {
     let Card { name, pages, tex, selected, locked, hint } = card;
     const W: f32 = 150.0;
     const H: f32 = 190.0;
-    let (rect, resp) = ui.allocate_exact_size(vec2(W, H + 46.0), Sense::click());
+    // Click *and* drag: `grid` above starts its reorder drag from `drag_started`, which a
+    // click-only sense would never fire.
+    let (rect, resp) = ui.allocate_exact_size(vec2(W, H + 46.0), Sense::click_and_drag());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, name));
     if resp.hovered() && !selected {
         ui.painter().rect_filled(rect, CornerRadius::same(8), t.hover);

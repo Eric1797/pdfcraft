@@ -372,6 +372,11 @@ pub struct PdfCraftApp {
     pub language: String,
     /// Customize program: window and taskbar title override (empty keeps PdfCraft).
     pub custom_name: String,
+    /// Show tools whose catalogue availability is not Ready (Preferences ▸ Tools and Home).
+    /// Off by default: unfinished tools stay out of the tool panel and the palette.
+    pub show_planned_tools: bool,
+    /// Show the ArtCraft community card on Home (Preferences ▸ Tools and Home). Off by default.
+    pub show_community: bool,
     pub dialog: Option<Dialog>,
     /// How to ask for the latest release (the desktop app sets it; see `updates`).
     pub update_source: Option<updates::UpdateSource>,
@@ -624,6 +629,8 @@ impl PdfCraftApp {
             theme_preference: ThemePreference::Light,
             language: i18n::AUTO.to_string(),
             custom_name: String::new(),
+            show_planned_tools: false,
+            show_community: false,
             dialog: None,
             update_source: None,
             updates: updates::Updates::default(),
@@ -836,7 +843,7 @@ impl PdfCraftApp {
         if let Some(p) = path {
             self.recent.retain(|r| r.path != p);
             self.recent.insert(0, RecentFile { name: name.to_string(), path: p, pages, size });
-            self.recent.truncate(12);
+            self.recent.truncate(10);
         }
         // What the form's scripts said while it opened (messages, errors) shows now, not with
         // the next edit.
@@ -1217,6 +1224,8 @@ impl PdfCraftApp {
             "highlight_fields": self.view_defaults.highlight_fields,
             "language": self.language,
             "custom_name": self.custom_name.trim().chars().take(MAX_CUSTOM_NAME_CHARS).collect::<String>(),
+            "show_planned_tools": self.show_planned_tools,
+            "show_community": self.show_community,
             "author": self.comment_prefs.author,
             // Drawn signatures keep their original form (older settings read the same).
             "signature": match &self.signature { Some(fill_sign::SavedSig::Drawn(s)) => Some(s), _ => None },
@@ -1265,6 +1274,12 @@ impl PdfCraftApp {
         }
         if let Some(name) = v["custom_name"].as_str().map(str::trim).filter(|n| !n.is_empty()) {
             self.custom_name = name.chars().take(MAX_CUSTOM_NAME_CHARS).collect();
+        }
+        if let Some(on) = v["show_planned_tools"].as_bool() {
+            self.show_planned_tools = on;
+        }
+        if let Some(on) = v["show_community"].as_bool() {
+            self.show_community = on;
         }
         // An empty or missing name keeps the login-name default; settings are untrusted, so the
         // name is cut to a sane length.
@@ -1357,6 +1372,20 @@ impl PdfCraftApp {
             }
             ("left", _) => self.left_open = value != "closed",
             ("home", _) => self.active = None,
+            ("show-planned-tools", _) => {
+                self.show_planned_tools = match value {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err("show-planned-tools must be on or off".into()),
+                };
+            }
+            ("show-community", _) => {
+                self.show_community = match value {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err("show-community must be on or off".into()),
+                };
+            }
             ("dialog", _) => {
                 self.dialog = match value {
                     "properties" => Some(Dialog::Properties(PropsTab::Description)),
