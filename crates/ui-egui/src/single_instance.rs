@@ -163,7 +163,7 @@ impl Handoff {
                         return true;
                     }
                     conn.buf.extend_from_slice(bytes);
-                    if conn.buf.iter().any(|b| *b == b'\n') {
+                    if conn.buf.contains(&b'\n') {
                         break;
                     }
                 }
@@ -204,10 +204,9 @@ fn parse(line: &[u8]) -> Option<HandoffRequest> {
 /// still binding (wait for its port); a lock naming a dead port is either a racing
 /// starter (wait briefly) or a crashed primary (taken over, at once when long stale).
 fn forward(dir: &Path, req: &HandoffRequest) -> bool {
-    if let Some(lock) = read_lock(&dir.join(LOCK_NAME)) {
-        if lock.port != 0 && try_forward(lock.port, req) {
-            return true;
-        }
+    if let Some(lock) = read_lock(&dir.join(LOCK_NAME))
+        && lock.port != 0 && try_forward(lock.port, req) {
+        return true;
     }
     for _ in 0..SLOW_ATTEMPTS {
         if create_placeholder(dir) {
