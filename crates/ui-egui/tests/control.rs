@@ -502,7 +502,21 @@ fn preferences_menu_and_shortcut_allow_switching_interface_languages() {
     }
     let english = ok(&mut h, &c, "ui.inspect", json!({ "query": "Next / previous match" }));
     assert_eq!(english["count"], 0);
-    ok(&mut h, &c, "ui.click", json!({ "label": "閉じる" }));
+    // The dialog's Close button shares its label with the window title-bar Close
+    // button where there is no native title bar (Windows): click the lowest one,
+    // which is the dialog's, as the title bar always sits at the top.
+    let closers = ok(&mut h, &c, "ui.inspect", json!({ "query": "閉じる" }));
+    let button = closers["widgets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|w| w["clickable"] == true && w["role"] == "Button")
+        .max_by(|a, b| {
+            let y = |w: &serde_json::Value| w["rect"].as_array().and_then(|r| r[1].as_f64()).unwrap_or(0.0);
+            y(a).partial_cmp(&y(b)).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .expect("shortcuts dialog Close button");
+    ok(&mut h, &c, "ui.click", json!({ "id": button["id"] }));
     assert_eq!(ok(&mut h, &c, "ui.state", json!({}))["documents"][0]["name"], "doc.pdf");
 }
 
