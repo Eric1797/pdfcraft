@@ -148,15 +148,10 @@ fn zip_index(bytes: &[u8]) -> Result<Vec<ZipEntry>, String> {
     // The end-of-central-directory record sits within the last 64 KiB + 22 bytes.
     let tail_from = bytes.len().saturating_sub(65535 + 22);
     let tail = bytes.get(tail_from..).ok_or("not a zip package")?;
-    let mut eocd = None;
-    // The record is 22 bytes; its last possible start is `len - 22`.
-    for i in (0..tail.len().saturating_sub(21)).rev() {
-        if tail.get(i..i + 4) == Some(b"PK\x05\x06".as_slice()) {
-            eocd = Some(i);
-            break;
-        }
-    }
-    let eocd = eocd.ok_or("not a zip package")?;
+    let eocd = (0..tail.len().saturating_sub(21))
+        .rev()
+        .find(|&i| tail.get(i..i.saturating_add(4)) == Some(b"PK\x05\x06".as_slice()))
+        .ok_or("not a zip package")?;
     let eocd = tail.get(eocd..).ok_or("not a zip package")?;
     let count = u16le(eocd.get(10..12).unwrap_or_default()).unwrap_or(0) as usize;
     let dir_size = u32le(eocd.get(12..16).unwrap_or_default()).unwrap_or(0) as u64;
@@ -358,11 +353,12 @@ fn half_pt(e: &quick_xml::events::BytesStart<'_>, name: &[u8]) -> Option<f64> {
 /// A 6-digit hex colour to 0–1 components; `auto` and anything else is default (black).
 fn hex_color(v: &str) -> Option<(f64, f64, f64)> {
     let v = v.trim();
-    if v.len() != 6 || v.eq_ignore_ascii_case("auto") {
+    let d = v.as_bytes();
+    if d.len() != 6 || v.eq_ignore_ascii_case("auto") {
         return None;
     }
-    let n = u32::from_str_radix(v, 16).ok()?;
-    Some((((n >> 16) & 0xFF) as f64 / 255.0, ((n >> 8) & 0xFF) as f64 / 255.0, (n & 0xFF) as f64 / 255.0))
+    let hex = |i: usize| u32::from_str_radix(std::str::from_utf8(d.get(i..i.saturating_add(2))?).ok()?, 16).ok()? as f64 / 255.0;
+    Some((hex(0), hex(2), hex(4)))
 }
 
 /// An on/off run property: present means on unless `val` says false/0/off.
@@ -593,9 +589,8 @@ impl<'a> Parser<'a> {
             match e {
                 quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => match local(e.name().0) {
                     b"b" => style.bold = flag(&e),
-                    b"bCs" => {}
+                    b"bCs" | b"iCs" => {}
                     b"i" => style.italic = flag(&e),
-                    b"iCs" => {}
                     b"u" => style.underline = flag(&e),
                     b"sz" => {
                         if let Some(size) = half_pt(&e, b"val") {
@@ -1074,20 +1069,17 @@ impl<'a> Parser<'a> {
                 continue;
             }
             let start = matches!(e, quick_xml::events::Event::Start(_));
-            match e {
-                quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => {
-                    if local(e.name().0) == b"Relationship" {
-                        if let (Some(id), Some(target)) = (attr(&e, b"Id"), attr(&e, b"Target")) {
-                            if target.starts_with("media/") && rels.len() < MAX_MEDIA_FILES {
-                                rels.insert(id, target);
-                            }
+            if let quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) = e {
+                if local(e.name().0) == b"Relationship" {
+                    if let (Some(id), Some(target)) = (attr(&e, b"Id"), attr(&e, b"Target")) {
+                        if target.starts_with("media/") && rels.len() < MAX_MEDIA_FILES {
+                            rels.insert(id, target);
                         }
                     }
-                    if start {
-                        skip = 1;
-                    }
                 }
-                _ => {}
+                if start {
+                    skip = 1;
+                }
             }
         }
         rels
@@ -1399,7 +1391,7 @@ impl Pages {
         }
     }
 
-    fn image_ref(&mut self, doc: &mut Document, name: &str, bytes: &[u8]) -> Option<String> {
+    fn image_key(&mut self, doc: &mut Document, name: &str, bytes: &[u8]) -> Option<String> {
         if let Some(i) = self.images.iter().position(|(n, _)| n == name) {
             return Some(format!("Im{i}"));
         }
@@ -1548,7 +1540,7 @@ impl Placer<'_> {
     fn place_image(&mut self, doc: &mut Document, idx: usize, x0: f64, align: Align) {
         let Some(image) = self.images.get(idx) else { return };
         let (mut w, mut h) = (image.w_emu / 12700.0, image.h_emu / 12700.0);
-        if !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0) {
+        if !w.is_finite() || !h.is_finite() || w <= 0.0 || h <= 0.0 {
             return;
         }
         let avail = self.pages.avail_width();
@@ -1565,7 +1557,7 @@ impl Placer<'_> {
             Align::Center => x0 + (avail - w).max(0.0) / 2.0,
             Align::Right => x0 + (avail - w).max(0.0),
         };
-        let Some(key) = self.pages.image_ref(doc, &image.name.clone(), &image.bytes) else { return };
+        let Some(key) = self.pages.image_key(doc, &image.name.clone(), &image.bytes) else { return };
         let y = self.pages.y - h;
         self.pages.current.extend_from_slice(format!("q {w:.3} 0 0 {h:.3} {x:.3} {y:.3} cm /{key} Do Q\n").as_bytes());
         self.pages.y -= h;

@@ -1594,7 +1594,7 @@ fn stored_docx(parts: &[(&str, &[u8])]) -> Vec<u8> {
         out.extend_from_slice(&0u32.to_le_bytes());
         out.extend_from_slice(&(data.len() as u32).to_le_bytes());
         out.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        out.extend_from_slice(&((*name).len() as u16).to_le_bytes());
+        out.extend_from_slice(&(name.len() as u16).to_le_bytes());
         out.extend_from_slice(&0u16.to_le_bytes());
         out.extend_from_slice(name.as_bytes());
         out.extend_from_slice(data);
@@ -1607,7 +1607,7 @@ fn stored_docx(parts: &[(&str, &[u8])]) -> Vec<u8> {
         central.extend_from_slice(&0u32.to_le_bytes());
         central.extend_from_slice(&(data.len() as u32).to_le_bytes());
         central.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        central.extend_from_slice(&((*name).len() as u16).to_le_bytes());
+        central.extend_from_slice(&(name.len() as u16).to_le_bytes());
         central.extend_from_slice(&0u16.to_le_bytes());
         central.extend_from_slice(&0u16.to_le_bytes());
         central.extend_from_slice(&0u16.to_le_bytes());
