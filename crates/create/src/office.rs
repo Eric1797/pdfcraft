@@ -1100,7 +1100,9 @@ impl<'a> Parser<'a> {
                 {
                     rels.insert(id, target);
                 }
-                if start {
+                // Skip unknown subtrees, but keep walking the Relationships root so
+                // its `<Relationship>` children are still seen.
+                if start && local(e.name().0) != b"Relationships" {
                     skip = 1;
                 }
             }
@@ -1927,7 +1929,7 @@ mod tests {
         assert!(text.contains("(A1)") && text.contains("(B2)"), "table cells: {text}");
         assert!(text.contains("re S"), "table borders: {text}");
         assert!(contents[0].windows(2).any(|w| w == [0x95, b' ']), "bullet prefix");
-        assert!(text.contains("Do"), "the picture is drawn: {text}");
+        assert!(text.contains("/Im0 Do"), "the picture is drawn: {text}");
         let pages = doc.get(doc.root().unwrap()).as_dict().unwrap().reference(b"Pages").unwrap();
         let kids = doc.get(pages).as_dict().unwrap().get(b"Kids").unwrap().as_array().unwrap().clone();
         let page = doc.resolve(&kids[0]).as_dict().cloned().unwrap();
