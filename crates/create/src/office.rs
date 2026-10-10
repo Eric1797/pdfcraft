@@ -410,23 +410,21 @@ fn parse_numbering(xml: &[u8]) -> Numbering {
                 b"num" => {
                     // `<w:num>` carries `numId` as an attribute and `abstractNumId`
                     // as a child element.
-                    if start {
-                        if let Some(id) = attr(&e, b"numId").and_then(|v| v.parse::<u32>().ok()) {
-                            let mut ab = None;
-                            while let Ok(Some(e)) = xml.next() {
-                                match e {
-                                    quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => {
-                                        if local(e.name().0) == b"abstractNumId" {
-                                            ab = attr(&e, b"val").and_then(|v| v.parse::<u32>().ok());
-                                        }
+                    if start && let Some(id) = attr(&e, b"numId").and_then(|v| v.parse::<u32>().ok()) {
+                        let mut ab = None;
+                        while let Ok(Some(e)) = xml.next() {
+                            match e {
+                                quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => {
+                                    if local(e.name().0) == b"abstractNumId" {
+                                        ab = attr(&e, b"val").and_then(|v| v.parse::<u32>().ok());
                                     }
-                                    quick_xml::events::Event::End(end) if local(end.name().0) == b"num" => break,
-                                    _ => {}
                                 }
+                                quick_xml::events::Event::End(end) if local(end.name().0) == b"num" => break,
+                                _ => {}
                             }
-                            if let Some(ab) = ab {
-                                nums.push((id, ab));
-                            }
+                        }
+                        if let Some(ab) = ab {
+                            nums.push((id, ab));
                         }
                     }
                 }
