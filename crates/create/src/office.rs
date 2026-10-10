@@ -108,11 +108,11 @@ struct Image {
     h_emu: f64,
 }
 
-/// A parsed document: blocks, images and the page setup.
+/// A parsed document: blocks and the page setup (images live on the parser
+/// while parsing and are borrowed by the placer afterwards).
 #[derive(Clone, Debug, Default)]
 struct WordDoc {
     blocks: Vec<Block>,
-    images: Vec<Image>,
     page: (f64, f64),
     margins: (f64, f64, f64, f64),
 }
@@ -498,8 +498,6 @@ struct Parser<'a> {
     name: &'a str,
     xml: Xml<'a>,
     numbering: Numbering,
-    /// numId to the next ordered number.
-    counters: HashMap<u32, usize>,
     rels: HashMap<String, String>,
     media: HashMap<String, Vec<u8>>,
     images: Vec<Image>,
@@ -673,11 +671,9 @@ impl<'a> Parser<'a> {
                         current.push_str("    ");
                     } else if tag == b"drawing" || tag == b"pict" {
                         flush_run(&mut current, &mut out, &style, base_size, base_bold);
-                        if start {
-                            if let Some(image) = self.parse_drawing()? {
-                                self.check_inline()?;
-                                out.push(Inline::Image(image));
-                            }
+                        if start && let Some(image) = self.parse_drawing()? {
+                            self.check_inline()?;
+                            out.push(Inline::Image(image));
                         }
                     } else if start {
                         // Field markers, proofing, deleted text: skipped with their subtree.
@@ -726,13 +722,13 @@ impl<'a> Parser<'a> {
             match e {
                 quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => match local(e.name().0) {
                     b"pStyle" => {
-                        if let Some(v) = attr(&e, b"val") {
-                            if let Some((size, bold)) = named_style(&v) {
-                                style.size = size;
-                                style.bold = bold;
-                                style.before = 12.0;
-                                style.after = 4.0;
-                            }
+                        if let Some(v) = attr(&e, b"val")
+                            && let Some((size, bold)) = named_style(&v)
+                        {
+                            style.size = size;
+                            style.bold = bold;
+                            style.before = 12.0;
+                            style.after = 4.0;
                         }
                     }
                     b"jc" => {
@@ -1025,10 +1021,12 @@ impl<'a> Parser<'a> {
                     if tag == b"tblGrid" {
                         in_grid = start;
                     } else if tag == b"gridCol" && in_grid {
-                        if let Some(w) = attr(&e, b"w").and_then(|v| v.parse::<f64>().ok()).map(|v| v / 20.0) {
-                            if w.is_finite() && w > 0.0 && widths.len() < MAX_TABLE_COLS {
-                                widths.push(w);
-                            }
+                        if let Some(w) = attr(&e, b"w").and_then(|v| v.parse::<f64>().ok()).map(|v| v / 20.0)
+                            && w.is_finite()
+                            && w > 0.0
+                            && widths.len() < MAX_TABLE_COLS
+                        {
+                            widths.push(w);
                         }
                     } else if tag == b"tr" {
                         if start {
@@ -1073,12 +1071,12 @@ impl<'a> Parser<'a> {
             }
             let start = matches!(e, quick_xml::events::Event::Start(_));
             if let quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) = e {
-                if local(e.name().0) == b"Relationship" {
-                    if let (Some(id), Some(target)) = (attr(&e, b"Id"), attr(&e, b"Target")) {
-                        if target.starts_with("media/") && rels.len() < MAX_MEDIA_FILES {
-                            rels.insert(id, target);
-                        }
-                    }
+                if local(e.name().0) == b"Relationship"
+                    && let (Some(id), Some(target)) = (attr(&e, b"Id"), attr(&e, b"Target"))
+                    && target.starts_with("media/")
+                    && rels.len() < MAX_MEDIA_FILES
+                {
+                    rels.insert(id, target);
                 }
                 if start {
                     skip = 1;
@@ -1098,10 +1096,13 @@ impl<'a> Parser<'a> {
                     b"pgSz" => {
                         let w = attr(&e, b"w").and_then(|v| v.parse::<f64>().ok()).map(|v| v / 20.0);
                         let h = attr(&e, b"h").and_then(|v| v.parse::<f64>().ok()).map(|v| v / 20.0);
-                        if let (Some(w), Some(h)) = (w, h) {
-                            if w.is_finite() && h.is_finite() && (72.0..=MAX_SIDE).contains(&w) && (72.0..=MAX_SIDE).contains(&h) {
-                                doc.page = (w, h);
-                            }
+                        if let (Some(w), Some(h)) = (w, h)
+                            && w.is_finite()
+                            && h.is_finite()
+                            && (72.0..=MAX_SIDE).contains(&w)
+                            && (72.0..=MAX_SIDE).contains(&h)
+                        {
+                            doc.page = (w, h);
                         }
                     }
                     b"pgMar" => {
@@ -1345,6 +1346,9 @@ impl Wrap {
     }
 }
 
+/// A finished page: its content stream and the images it uses.
+type FinishedPage = (Vec<u8>, Vec<(String, ObjRef)>);
+
 /// Page assembly: blocks to finished content streams with their resources.
 struct Pages {
     fonts: ObjRef,
@@ -1352,7 +1356,7 @@ struct Pages {
     margins: (f64, f64, f64, f64),
     current: Vec<u8>,
     images: Vec<(String, ObjRef)>,
-    done: Vec<(Vec<u8>, Vec<(String, ObjRef)>)>,
+    done: Vec<FinishedPage>,
     y: f64,
 }
 
@@ -1588,11 +1592,11 @@ impl Placer<'_> {
             // Every cell's lines first: the row is as tall as its tallest cell.
             let mut cells: Vec<Vec<Line>> = Vec::new();
             let mut row_h = 0.0f64;
-            for c in 0..cols {
+            for (c, width) in widths.iter().enumerate().take(cols) {
                 let mut cell_lines = Vec::new();
                 if let Some(cell) = row.get(c) {
                     for para in &cell.paras {
-                        cell_lines.extend(wrap_para(para, (widths[c] - 2.0 * PAD).max(36.0), None));
+                        cell_lines.extend(wrap_para(para, (*width - 2.0 * PAD).max(36.0), None));
                     }
                 }
                 row_h = row_h.max(cell_lines.iter().map(|l: &Line| l.height).fold(0.0f64, f64::max) + 2.0 * PAD);
@@ -1637,22 +1641,21 @@ pub fn from_office(name: &str, bytes: &[u8]) -> Result<Document, CreateError> {
     // Relationships and media are best-effort: pictures simply drop out when unreadable.
     let mut rels = HashMap::new();
     let mut media: HashMap<String, Vec<u8>> = HashMap::new();
-    if let Some(entry) = find("word/_rels/document.xml.rels") {
-        if let Ok(xml) = read(entry) {
-            rels = Parser::parse_rels(&xml);
-            let media_names: Vec<String> =
-                entries.iter().filter(|e| e.name.starts_with("word/media/")).take(MAX_MEDIA_FILES).map(|e| e.name.clone()).collect();
-            for m in media_names {
-                if let Some(entry) = entries.iter().find(|e| e.name == m) {
-                    if let Ok(data) = read(entry) {
-                        media.insert(m.trim_start_matches("word/").to_string(), data);
-                    }
-                }
+    if let Some(entry) = find("word/_rels/document.xml.rels")
+        && let Ok(xml) = read(entry)
+    {
+        rels = Parser::parse_rels(&xml);
+        let media_names: Vec<String> =
+            entries.iter().filter(|e| e.name.starts_with("word/media/")).take(MAX_MEDIA_FILES).map(|e| e.name.clone()).collect();
+        for m in media_names {
+            if let Some(entry) = entries.iter().find(|e| e.name == m)
+                && let Ok(data) = read(entry)
+            {
+                media.insert(m.trim_start_matches("word/").to_string(), data);
             }
         }
     }
-    let mut parser =
-        Parser { name, xml: Xml::new(&document), numbering, counters: HashMap::new(), rels, media, images: Vec::new(), inlines: 0, paras: 0 };
+    let mut parser = Parser { name, xml: Xml::new(&document), numbering, rels, media, images: Vec::new(), inlines: 0, paras: 0 };
     let mut doc = WordDoc { page: super::LETTER, margins: (72.0, 72.0, 72.0, 72.0), ..WordDoc::default() };
     parse_body(&mut parser, &mut doc).map_err(|e| match e {
         CreateError::Invalid(m) if m.starts_with(name) => CreateError::Invalid(m),
@@ -1799,7 +1802,7 @@ mod tests {
         assert!(text.contains("world & friends"), "{text}");
         assert!(text.contains("/F1") && text.contains("/F2") && text.contains("/F3"), "regular, bold and italic faces: {text}");
         let pages = doc.get(doc.root().unwrap()).as_dict().unwrap().reference(b"Pages").unwrap();
-        let kids = doc.get(pages).as_dict().unwrap().get(b"Kids").unwrap().as_array().unwrap();
+        let kids = doc.get(pages).as_dict().unwrap().get(b"Kids").unwrap().as_array().unwrap().clone();
         let page = doc.resolve(&kids[0]).as_dict().cloned().unwrap();
         let media = page.get(b"MediaBox").unwrap().as_array().unwrap();
         let size: Vec<f64> = media.iter().map(|o| o.as_f64().unwrap()).collect();
