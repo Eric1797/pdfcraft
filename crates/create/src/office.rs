@@ -566,12 +566,14 @@ impl<'a> Parser<'a> {
     }
 
     fn text_of(&mut self, preserve: bool) -> Result<String, CreateError> {
+        let name = self.name;
         let mut out = String::new();
         loop {
             let Some(e) = self.next()? else { return Err(self.err("the Word document ends mid-element")) };
             match e {
                 quick_xml::events::Event::Text(t) => {
-                    let s = std::str::from_utf8(&t.into_inner()).map_err(|_| self.err("the Word document is not valid text"))?;
+                    let bytes = t.into_inner();
+                    let s = std::str::from_utf8(&bytes).map_err(|_| bad(name, "the Word document is not valid text"))?;
                     out.push_str(&unescape(s));
                 }
                 quick_xml::events::Event::End(end) if local(end.name().0) == b"t" => break,
@@ -665,13 +667,10 @@ impl<'a> Parser<'a> {
                             style = RunStyle::default();
                         }
                     } else if tag == b"br" {
+                        let page = attr(&e, b"type").as_deref() == Some("page");
                         flush_run(&mut current, &mut out, &style, base_size, base_bold);
                         self.check_inline()?;
-                        if attr(&e, b"type").as_deref() == Some("page") {
-                            out.push(Inline::PageBreak);
-                        } else {
-                            out.push(Inline::Break);
-                        }
+                        out.push(if page { Inline::PageBreak } else { Inline::Break });
                     } else if tag == b"tab" {
                         current.push_str("    ");
                     } else if tag == b"drawing" || tag == b"pict" {
