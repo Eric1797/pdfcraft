@@ -220,7 +220,7 @@ fn zip_read(bytes: &[u8], entry: &ZipEntry, total: &mut u64) -> Result<Vec<u8>, 
     let out = match entry.method {
         0 => data.to_vec(),
         8 => {
-            let mut dec = flate2::read::DeflateDecoder::new(data);
+            let dec = flate2::read::DeflateDecoder::new(data);
             let mut out = Vec::new();
             dec.take(MAX_ENTRY_BYTES.saturating_add(1)).read_to_end(&mut out).map_err(|_| "not a Word document".to_string())?;
             if out.len() as u64 > MAX_ENTRY_BYTES {
@@ -537,10 +537,17 @@ impl<'a> Parser<'a> {
         bad(self.name, why)
     }
 
+    /// The next event, with XML errors labelled by file. (A `map_err` closure here would
+    /// borrow `self` while the returned event borrows the buffer.)
+    fn next(&mut self) -> Result<Option<quick_xml::events::Event<'_>>, CreateError> {
+        let name = self.name;
+        self.xml.next().map_err(|e| bad(name, &e.to_string()))
+    }
+
     /// Skip the rest of the current element (the opening tag was just read).
     fn skip(&mut self) -> Result<(), CreateError> {
         let mut depth = 1usize;
-        while let Some(e) = self.xml.next().map_err(|e| self.err(&e))? {
+        while let Some(e) = self.next()? {
             match e {
                 quick_xml::events::Event::Start(_) => depth = depth.saturating_add(1),
                 quick_xml::events::Event::End(_) => {
@@ -561,10 +568,10 @@ impl<'a> Parser<'a> {
     fn text_of(&mut self, preserve: bool) -> Result<String, CreateError> {
         let mut out = String::new();
         loop {
-            let Some(e) = self.xml.next().map_err(|e| self.err(&e))? else { return Err(self.err("the Word document ends mid-element")) };
+            let Some(e) = self.next()? else { return Err(self.err("the Word document ends mid-element")) };
             match e {
                 quick_xml::events::Event::Text(t) => {
-                    let s = std::str::from_utf8(t.into_inner()).map_err(|_| self.err("the Word document is not valid text"))?;
+                    let s = std::str::from_utf8(&t.into_inner()).map_err(|_| self.err("the Word document is not valid text"))?;
                     out.push_str(&unescape(s));
                 }
                 quick_xml::events::Event::End(end) if local(end.name().0) == b"t" => break,
@@ -579,7 +586,8 @@ impl<'a> Parser<'a> {
     fn run_style(&mut self) -> Result<RunStyle, CreateError> {
         let mut style = RunStyle::default();
         loop {
-            let Some(e) = self.xml.next().map_err(|e| self.err(&e))? else { return Err(self.err("the Word document ends mid-element")) };
+            let Some(e) = self.next()? else { return Err(self.err("the Word document ends mid-element")) };
+            let start = matches!(e, quick_xml::events::Event::Start(_));
             match e {
                 quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => match local(e.name().0) {
                     b"b" => style.bold = flag(&e),
@@ -603,7 +611,7 @@ impl<'a> Parser<'a> {
                         _ => {}
                     },
                     _ => {
-                        if matches!(e, quick_xml::events::Event::Start(_)) {
+                        if start {
                             // Unknown run property with children: skip it.
                             self.skip()?;
                         }
@@ -639,7 +647,8 @@ impl<'a> Parser<'a> {
         let mut out = Vec::new();
         let mut current = String::new();
         loop {
-            let Some(e) = self.xml.next().map_err(|e| self.err(&e))? else { return Err(self.err("the Word document ends mid-element")) };
+            let Some(e) = self.next()? else { return Err(self.err("the Word document ends mid-element")) };
+            let start = matches!(e, quick_xml::events::Event::Start(_));
             match e {
                 quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => {
                     let tag = local(e.name().0);
@@ -650,7 +659,7 @@ impl<'a> Parser<'a> {
                         self.check_inline()?;
                         current.push_str(&text);
                     } else if tag == b"rPr" {
-                        if matches!(e, quick_xml::events::Event::Start(_)) {
+                        if start {
                             style = self.run_style()?;
                         } else {
                             style = RunStyle::default();
@@ -667,13 +676,13 @@ impl<'a> Parser<'a> {
                         current.push_str("    ");
                     } else if tag == b"drawing" || tag == b"pict" {
                         flush_run(&mut current, &mut out, &style, base_size, base_bold);
-                        if matches!(e, quick_xml::events::Event::Start(_)) {
+                        if start {
                             if let Some(image) = self.parse_drawing()? {
                                 self.check_inline()?;
                                 out.push(Inline::Image(image));
                             }
                         }
-                    } else if matches!(e, quick_xml::events::Event::Start(_)) {
+                    } else if start {
                         // Field markers, proofing, deleted text: skipped with their subtree.
                         self.skip()?;
                     }
@@ -691,15 +700,16 @@ impl<'a> Parser<'a> {
     fn parse_rich(&mut self, end: &[u8], base_size: f64, base_bold: bool) -> Result<Vec<Inline>, CreateError> {
         let mut out = Vec::new();
         loop {
-            let Some(e) = self.xml.next().map_err(|e| self.err(&e))? else { return Err(self.err("the Word document ends mid-element")) };
+            let Some(e) = self.next()? else { return Err(self.err("the Word document ends mid-element")) };
+            let start = matches!(e, quick_xml::events::Event::Start(_));
             match e {
                 quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => {
                     let tag = local(e.name().0);
                     if tag == b"r" {
-                        if matches!(e, quick_xml::events::Event::Start(_)) {
+                        if start {
                             out.extend(self.parse_run(base_size, base_bold)?);
                         }
-                    } else if matches!(e, quick_xml::events::Event::Start(_)) {
+                    } else if start {
                         self.skip()?;
                     }
                 }
@@ -714,7 +724,8 @@ impl<'a> Parser<'a> {
     fn para_style(&mut self) -> Result<ParaStyle, CreateError> {
         let mut style = ParaStyle::default();
         loop {
-            let Some(e) = self.xml.next().map_err(|e| self.err(&e))? else { return Err(self.err("the Word document ends mid-element")) };
+            let Some(e) = self.next()? else { return Err(self.err("the Word document ends mid-element")) };
+            let start = matches!(e, quick_xml::events::Event::Start(_));
             match e {
                 quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => match local(e.name().0) {
                     b"pStyle" => {
@@ -748,13 +759,13 @@ impl<'a> Parser<'a> {
                         }
                     }
                     b"numPr" => {
-                        if matches!(e, quick_xml::events::Event::Start(_)) {
+                        if start {
                             style.list = self.parse_num_pr()?;
                         }
                     }
                     b"pageBreakBefore" => style.page_break = flag(&e),
                     _ => {
-                        if matches!(e, quick_xml::events::Event::Start(_)) {
+                        if start {
                             self.skip()?;
                         }
                     }
@@ -770,13 +781,14 @@ impl<'a> Parser<'a> {
     fn parse_num_pr(&mut self) -> Result<Option<ListRef>, CreateError> {
         let (mut num, mut level) = (None, 0u8);
         loop {
-            let Some(e) = self.xml.next().map_err(|e| self.err(&e))? else { return Err(self.err("the Word document ends mid-element")) };
+            let Some(e) = self.next()? else { return Err(self.err("the Word document ends mid-element")) };
+            let start = matches!(e, quick_xml::events::Event::Start(_));
             match e {
                 quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => match local(e.name().0) {
                     b"numId" => num = attr(&e, b"val").and_then(|v| v.parse::<u32>().ok()),
                     b"ilvl" => level = attr(&e, b"val").and_then(|v| v.parse::<u8>().ok()).unwrap_or(0).min(8),
                     _ => {
-                        if matches!(e, quick_xml::events::Event::Start(_)) {
+                        if start {
                             self.skip()?;
                         }
                     }
@@ -796,11 +808,11 @@ impl<'a> Parser<'a> {
         let mut content = Vec::new();
         if !empty {
             loop {
-                let Some(e) = self.xml.next().map_err(|e| self.err(&e))? else { return Err(self.err("the Word document ends mid-element")) };
+                let Some(e) = self.next()? else { return Err(self.err("the Word document ends mid-element")) };
+                let start = matches!(e, quick_xml::events::Event::Start(_));
                 match e {
                     quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => {
                         let tag = local(e.name().0);
-                        let start = matches!(e, quick_xml::events::Event::Start(_));
                         if tag == b"pPr" {
                             if start {
                                 style = self.para_style()?;
@@ -852,10 +864,10 @@ impl<'a> Parser<'a> {
     fn parse_drawing(&mut self) -> Result<Option<usize>, CreateError> {
         let (mut embed, mut cx, mut cy) = (None, None, None);
         let mut depth = 1usize;
-        while let Some(e) = self.xml.next().map_err(|e| self.err(&e))? {
+        while let Some(e) = self.next()? {
+            let start = matches!(e, quick_xml::events::Event::Start(_));
             match e {
                 quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => {
-                    let start = matches!(e, quick_xml::events::Event::Start(_));
                     if start {
                         depth = depth.saturating_add(1);
                     }
@@ -908,11 +920,11 @@ impl<'a> Parser<'a> {
     fn parse_row(&mut self) -> Result<Vec<Cell>, CreateError> {
         let mut row = Vec::new();
         loop {
-            let Some(e) = self.xml.next().map_err(|e| self.err(&e))? else { return Err(self.err("the Word document ends mid-element")) };
+            let Some(e) = self.next()? else { return Err(self.err("the Word document ends mid-element")) };
+            let start = matches!(e, quick_xml::events::Event::Start(_));
             match e {
                 quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => {
                     let tag = local(e.name().0);
-                    let start = matches!(e, quick_xml::events::Event::Start(_));
                     if tag == b"tc" {
                         if start {
                             row.push(self.parse_cell()?);
@@ -938,11 +950,11 @@ impl<'a> Parser<'a> {
     fn parse_cell(&mut self) -> Result<Cell, CreateError> {
         let mut cell = Cell::default();
         loop {
-            let Some(e) = self.xml.next().map_err(|e| self.err(&e))? else { return Err(self.err("the Word document ends mid-element")) };
+            let Some(e) = self.next()? else { return Err(self.err("the Word document ends mid-element")) };
+            let start = matches!(e, quick_xml::events::Event::Start(_));
             match e {
                 quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => {
                     let tag = local(e.name().0);
-                    let start = matches!(e, quick_xml::events::Event::Start(_));
                     if tag == b"p" {
                         cell.paras.push(self.parse_para(!start)?);
                     } else if tag == b"tbl" {
@@ -1008,11 +1020,11 @@ impl<'a> Parser<'a> {
         let mut rows: Vec<Vec<Cell>> = Vec::new();
         let mut in_grid = false;
         loop {
-            let Some(e) = self.xml.next().map_err(|e| self.err(&e))? else { return Err(self.err("the Word document ends mid-element")) };
+            let Some(e) = self.next()? else { return Err(self.err("the Word document ends mid-element")) };
+            let start = matches!(e, quick_xml::events::Event::Start(_));
             match e {
                 quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => {
                     let tag = local(e.name().0);
-                    let start = matches!(e, quick_xml::events::Event::Start(_));
                     if tag == b"tblGrid" {
                         in_grid = start;
                     } else if tag == b"gridCol" && in_grid {
@@ -1062,6 +1074,7 @@ impl<'a> Parser<'a> {
                 }
                 continue;
             }
+            let start = matches!(e, quick_xml::events::Event::Start(_));
             match e {
                 quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => {
                     if local(e.name().0) == b"Relationship" {
@@ -1071,7 +1084,7 @@ impl<'a> Parser<'a> {
                             }
                         }
                     }
-                    if matches!(e, quick_xml::events::Event::Start(_)) {
+                    if start {
                         skip = 1;
                     }
                 }
@@ -1084,7 +1097,8 @@ impl<'a> Parser<'a> {
     /// A section's page size and margins in points; the last section seen wins.
     fn parse_sect_pr(&mut self, doc: &mut WordDoc) -> Result<(), CreateError> {
         loop {
-            let Some(e) = self.xml.next().map_err(|e| self.err(&e))? else { return Err(self.err("the Word document ends mid-element")) };
+            let Some(e) = self.next()? else { return Err(self.err("the Word document ends mid-element")) };
+            let start = matches!(e, quick_xml::events::Event::Start(_));
             match e {
                 quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => match local(e.name().0) {
                     b"pgSz" => {
@@ -1103,7 +1117,7 @@ impl<'a> Parser<'a> {
                         }
                     }
                     _ => {
-                        if matches!(e, quick_xml::events::Event::Start(_)) {
+                        if start {
                             self.skip()?;
                         }
                     }
@@ -1126,16 +1140,16 @@ fn parse_body(parser: &mut Parser<'_>, doc: &mut WordDoc) -> Result<(), CreateEr
 /// document tags (`w:sdt`) and their content wrappers are entered, not skipped.
 fn parse_blocks(parser: &mut Parser<'_>, doc: &mut WordDoc, end: Option<&[u8]>) -> Result<(), CreateError> {
     loop {
-        let Some(e) = parser.xml.next().map_err(|e| parser.err(&e))? else {
+        let Some(e) = parser.next()? else {
             if end.is_none() {
                 break;
             }
             return Err(parser.err("the Word document ends mid-element"));
         };
+        let start = matches!(e, quick_xml::events::Event::Start(_));
         match e {
             quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => {
                 let tag = local(e.name().0);
-                let start = matches!(e, quick_xml::events::Event::Start(_));
                 if tag == b"p" {
                     doc.blocks.push(Block::Para(parser.parse_para(!start)?));
                 } else if tag == b"tbl" {
@@ -1579,7 +1593,7 @@ impl Placer<'_> {
         for row in &table.rows {
             // Every cell's lines first: the row is as tall as its tallest cell.
             let mut cells: Vec<Vec<Line>> = Vec::new();
-            let mut row_h = 0.0;
+            let mut row_h = 0.0f64;
             for c in 0..cols {
                 let mut cell_lines = Vec::new();
                 if let Some(cell) = row.get(c) {
@@ -1622,7 +1636,7 @@ pub fn from_office(name: &str, bytes: &[u8]) -> Result<Document, CreateError> {
     let entries = zip_index(bytes).map_err(|e| bad(name, &e))?;
     let find = |suffix: &str| entries.iter().find(|e| e.name == suffix);
     let mut total = 0u64;
-    let read = |entry: &ZipEntry| zip_read(bytes, entry, &mut total).map_err(|e| bad(name, &e));
+    let mut read = |entry: &ZipEntry| zip_read(bytes, entry, &mut total).map_err(|e| bad(name, &e));
     let Some(doc_entry) = find("word/document.xml") else { return Err(bad(name, "not a Word document: word/document.xml is missing")) };
     let document = read(doc_entry)?;
     let numbering = find("word/numbering.xml").and_then(|e| read(e).ok()).map(|xml| parse_numbering(&xml)).unwrap_or_default();
