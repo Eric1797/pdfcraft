@@ -1824,7 +1824,8 @@ mod tests {
         assert!(text.contains("(Report) Tj"), "{text}");
         assert!(text.contains("(Hello ) Tj"), "{text}");
         assert!(text.contains("(brave ) Tj"), "{text}");
-        assert!(text.contains("world & friends"), "{text}");
+        // Words are separate `Tj` runs: the entity resolves between them.
+        assert!(text.contains("(world ) Tj") && text.contains("(& ) Tj") && text.contains("(friends) Tj"), "{text}");
         assert!(text.contains("/F1") && text.contains("/F2") && text.contains("/F3"), "regular, bold and italic faces: {text}");
         let pages = doc.get(doc.root().unwrap()).as_dict().unwrap().reference(b"Pages").unwrap();
         let kids = doc.get(pages).as_dict().unwrap().get(b"Kids").unwrap().as_array().unwrap().clone();
@@ -1921,7 +1922,8 @@ mod tests {
         let (doc, contents) = reopen(&from_office("mixed.docx", &pkg).unwrap());
         let text = String::from_utf8_lossy(&contents[0]);
         assert!(text.contains("(1. ) Tj") || text.contains("(1.)"), "decimal prefix: {text}");
-        assert!(text.contains("Dot one") && text.contains("First") && text.contains("Second"), "{text}");
+        // Words are separate `Tj` runs.
+        assert!(text.contains("(Dot ) Tj") && text.contains("(one) Tj") && text.contains("(First) Tj") && text.contains("(Second) Tj"), "{text}");
         assert!(text.contains("(A1)") && text.contains("(B2)"), "table cells: {text}");
         assert!(text.contains("re S"), "table borders: {text}");
         assert!(contents[0].windows(2).any(|w| w == [0x95, b' ']), "bullet prefix");
