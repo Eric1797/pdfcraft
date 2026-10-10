@@ -1,3 +1,6 @@
+use egui_kittest::Harness;
+use pdfcraft_ui_egui::PdfCraftApp;
+
 #[test]
 fn editing_existing_images_on_the_page() {
     // A page made from a 40 × 20 image (at 72 dpi: a 40 × 20 pt page filled by it).
