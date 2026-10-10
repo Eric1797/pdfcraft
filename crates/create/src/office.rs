@@ -352,13 +352,16 @@ fn half_pt(e: &quick_xml::events::BytesStart<'_>, name: &[u8]) -> Option<f64> {
 
 /// A 6-digit hex colour to 0–1 components; `auto` and anything else is default (black).
 fn hex_color(v: &str) -> Option<(f64, f64, f64)> {
+    fn channel(d: &[u8], i: usize) -> Option<f64> {
+        let text = std::str::from_utf8(d.get(i..i.saturating_add(2))?).ok()?;
+        u32::from_str_radix(text, 16).ok().map(|n| n as f64 / 255.0)
+    }
     let v = v.trim();
     let d = v.as_bytes();
     if d.len() != 6 || v.eq_ignore_ascii_case("auto") {
         return None;
     }
-    let hex = |i: usize| u32::from_str_radix(std::str::from_utf8(d.get(i..i.saturating_add(2))?).ok()?, 16).ok()? as f64 / 255.0;
-    Some((hex(0), hex(2), hex(4)))
+    Some((channel(d, 0)?, channel(d, 2)?, channel(d, 4)?))
 }
 
 /// An on/off run property: present means on unless `val` says false/0/off.
