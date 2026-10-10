@@ -4,6 +4,9 @@
 //! `--create-images [images…]` stages the images in one PDF and asks for the page DPI.
 //! `--combine [pdfs…]` stages the PDFs in the Combine files tab, in order, for rearranging
 //! and combining (Windows Explorer ▸ Combine with PdfCraft…).
+//! `--convert-word [docs…]` converts the Word documents to PDF: one opens as a new tab,
+//! several are combined in order into one PDF (Windows Explorer ▸ Convert to PDF with
+//! PdfCraft…).
 //!
 //! View options (applied after the files open; also the seed of the UI control channel):
 //! `--page N  --zoom 150  --layout continuous|two-up|single  --panel comments|bookmarks|pages|fields|layers|attachments|none
@@ -137,6 +140,7 @@ fn main() -> eframe::Result {
     let mut control_file: Option<String> = None;
     let mut create_images = false;
     let mut combine = false;
+    let mut convert_word = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -147,6 +151,7 @@ fn main() -> eframe::Result {
             "--control" => control_file = args.next(),
             "--create-images" => create_images = true,
             "--combine" => combine = true,
+            "--convert-word" => convert_word = true,
             flag if flag.starts_with("--") => {
                 let value = args.next().unwrap_or_default();
                 options.push((flag.trim_start_matches("--").to_string(), value));
@@ -194,7 +199,7 @@ fn main() -> eframe::Result {
     // carries files, it hands them over and exits quietly, so an Explorer multi-select
     // lands in one window however Explorer invoked it. A `--control` launch always owns
     // its window (its driver expects this exact process to answer).
-    let handoff_request = pdfcraft_ui_egui::single_instance::HandoffRequest { files: files.clone(), combine, create_images };
+    let handoff_request = pdfcraft_ui_egui::single_instance::HandoffRequest { files: files.clone(), combine, create_images, convert_word };
     let handoff = if control_file.is_some() {
         None
     } else if let Some(dir) = settings_dir() {
@@ -254,6 +259,10 @@ fn main() -> eframe::Result {
                 }
             } else if combine {
                 if let Err(e) = app.begin_combine_paths(&files) {
+                    app.notify(e);
+                }
+            } else if convert_word {
+                if let Err(e) = app.convert_word_paths(&files) {
                     app.notify(e);
                 }
             } else {

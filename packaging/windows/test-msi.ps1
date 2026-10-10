@@ -131,6 +131,21 @@ Assert-Equal $pdfCommand[0] '"[#PdfcraftExe]" --combine "%1"' "pdf context menu 
 $pdfSelection = Read-Row ('SELECT `Value` FROM `Registry` WHERE `Key` = ''' + $pdfKey + ''' AND `Name` = ''MultiSelectModel''') 1
 Assert-Equal $pdfSelection[0] 'Player' "pdf context menu selection"
 
+# Word context menu converts the selected documents (one opens as a tab, several combine
+# into one PDF). Player model like the Combine verb above; owned by the app component so
+# uninstall removes it; no Word default association is changed.
+foreach ($ext in @('docx', 'docm')) {
+  $key = 'Software\Classes\SystemFileAssociations\.' + $ext + '\shell\PdfCraft.WordToPdf'
+  $menu = Read-Row ('SELECT `Value`, `Component_`, `Root` FROM `Registry` WHERE `Key` = ''' + $key + ''' AND `Name` IS NULL') 3
+  Assert-Equal $menu[0] 'Convert to PDF with PdfCraft…' "$ext context menu label"
+  Assert-Equal $menu[1] 'PdfcraftApp' "$ext context menu component"
+  Assert-Equal $menu[2] '2' "$ext context menu HKLM root"
+  $command = Read-Row ('SELECT `Value` FROM `Registry` WHERE `Key` = ''' + $key + '\command''') 1
+  Assert-Equal $command[0] '"[#PdfcraftExe]" --convert-word "%1"' "$ext context menu command"
+  $selection = Read-Row ('SELECT `Value` FROM `Registry` WHERE `Key` = ''' + $key + ''' AND `Name` = ''MultiSelectModel''') 1
+  Assert-Equal $selection[0] 'Player' "$ext context menu selection"
+}
+
 # Negative sequences are Windows Installer's success/user-exit/failure paths. Only full UI
 # shows these dialogs: an unattended /qn or /qb install must never wait for a Finish click.
 foreach ($exit in @(@('InstallComplete', '-1'), @('InstallCancelled', '-2'), @('InstallFailed', '-3'))) {

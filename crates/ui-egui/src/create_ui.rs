@@ -1,5 +1,5 @@
-//! Create a PDF (blank, from images, from text) and Reduce File Size (execution plan M10.2,
-//! M11.1). Opening an image or a text file converts it to a new, unsaved PDF, as Acrobat does.
+//! Create a PDF (blank, from images, from text, from Word) and Reduce File Size (execution plan M10.2,
+//! M11.1). Opening an image, a text file or a Word document converts it to a new, unsaved PDF, as Acrobat does.
 
 use std::sync::Arc;
 
@@ -85,11 +85,11 @@ fn stem(name: &str) -> &str {
 }
 
 impl PdfCraftApp {
-    /// Convert a non-PDF file (image, text) into a new tab. Returns `None` when `bytes` is not
-    /// something Create understands (the caller then tries to open it as a PDF).
+    /// Convert a non-PDF file (image, text, Word) into a new tab. Returns `None` when `bytes`
+    /// is not something Create understands (the caller then tries to open it as a PDF).
     pub(crate) fn open_converted(&mut self, name: &str, bytes: &[u8]) -> Option<Result<(), String>> {
         use pdfcraft_engine::SourceKind;
-        if !matches!(pdfcraft_engine::source_kind(name, bytes), Some(SourceKind::Image | SourceKind::Text)) {
+        if !matches!(pdfcraft_engine::source_kind(name, bytes), Some(SourceKind::Image | SourceKind::Text | SourceKind::Office)) {
             return None;
         }
         let created = self.session.convert_to_pdf(name, &Arc::new(bytes.to_vec())).map(|(_, pdf)| pdf);
@@ -170,6 +170,62 @@ impl PdfCraftApp {
     /// One new document from images (tests and automation call this directly).
     pub fn create_from_images(&mut self, images: Vec<(String, Vec<u8>)>) {
         self.create_from_images_with_resolution(images, pdfcraft_engine::ImageResolution::Embedded);
+    }
+
+    /// Word file extensions Create converts to PDF.
+    pub const WORD_EXTS: [&str; 4] = ["docx", "docm", "dotx", "dotm"];
+
+    /// Convert ▸ Word: pick Word documents; one opens as a new PDF tab, several are
+    /// converted and combined into one PDF, in the order picked.
+    pub(crate) fn create_word_dialog(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let dialog = rfd::AsyncFileDialog::new().add_filter(tl!("Word documents"), &Self::WORD_EXTS).set_title(tl!("Choose Word documents"));
+            self.ask(crate::pickers::Ask::Files(dialog), None, |app, files| {
+                let mut docs = Vec::new();
+                for f in files {
+                    match std::fs::read(&f) {
+                        Ok(b) => docs.push((f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), b)),
+                        Err(e) => {
+                            app.notify_fmt("Couldn't read {name}: {e}", &[("name", &f.display().to_string()), ("e", &e.to_string())]);
+                            return;
+                        }
+                    }
+                }
+                app.create_word_files(docs);
+            });
+        }
+        #[cfg(target_arch = "wasm32")]
+        self.notify_tr("On the web, open or drop a Word document to convert it");
+    }
+
+    /// Convert Word files: one opens as a new PDF tab, several are converted and combined
+    /// into one PDF in order (also used by the `--convert-word` launch and handoff).
+    pub(crate) fn create_word_files(&mut self, files: Vec<(String, Vec<u8>)>) {
+        if let [(name, bytes)] = files.as_slice() {
+            match self.open_converted(name, bytes) {
+                Some(Ok(())) => {}
+                Some(Err(e)) => self.notify(e),
+                None => self.notify_fmt("Couldn't convert {name} to PDF", &[("name", name)]),
+            }
+        } else if !files.is_empty() {
+            self.stage_create_multiple(files);
+        }
+    }
+
+    /// Convert the Word files at `paths` (shell verb, handoff): one opens as a new PDF tab,
+    /// several are converted and combined into one PDF.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn convert_word_paths(&mut self, paths: &[String]) -> Result<(), String> {
+        let mut files = Vec::new();
+        for p in paths {
+            let path = std::path::Path::new(p);
+            let bytes = std::fs::read(path).map_err(|e| format!("Couldn't read {}: {e}", path.display()))?;
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            files.push((name, bytes));
+        }
+        self.create_word_files(files);
+        Ok(())
     }
 
     /// Stage selected images for the DPI chooser; no document is created until confirmed.

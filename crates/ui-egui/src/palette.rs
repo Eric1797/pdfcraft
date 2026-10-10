@@ -65,20 +65,18 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
         // Registered commands are always listed above on their own merits; finished items
         // of a planned group stay listed either way.
         let group_visible = app.show_planned_tools || g.availability == Availability::Ready;
-        if group_visible {
-            if let Some(s) = score(tl!(g.label), &q).or_else(|| score(g.label, &q)) {
-                hits.push((
-                    s,
-                    Hit {
-                        group: Some(g.id),
-                        label: tl!(g.label).to_string(),
-                        detail: tl!("Tool").into(),
-                        icon: g.icon,
-                        command: None,
-                        ready: g.availability == Availability::Ready,
-                    },
-                ));
-            }
+        if group_visible && let Some(s) = score(tl!(g.label), &q).or_else(|| score(g.label, &q)) {
+            hits.push((
+                s,
+                Hit {
+                    group: Some(g.id),
+                    label: tl!(g.label).to_string(),
+                    detail: tl!("Tool").into(),
+                    icon: g.icon,
+                    command: None,
+                    ready: g.availability == Availability::Ready,
+                },
+            ));
         }
         for sec in g.sections {
             for i in sec.items {

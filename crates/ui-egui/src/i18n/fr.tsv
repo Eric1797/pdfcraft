@@ -2047,6 +2047,18 @@
 # Combine grid view: English until translated.
 	Grid	Grid
 
+# Convert Word to PDF: English until translated.
+	Create PDF from Word…	Create PDF from Word…
+	Convert to PDF	Convert to PDF
+	Word document (.docx)	Word document (.docx)
+	Word documents	Word documents
+	Choose Word documents	Choose Word documents
+	Couldn't convert {name} to PDF	Couldn't convert {name} to PDF
+	None of those files can be made into a PDF; use PDFs, images, .txt files or Word (.docx) files	None of those files can be made into a PDF; use PDFs, images, .txt files or Word (.docx) files
+	PDF, images, text and Word	PDF, images, text and Word
+	Images, text and Word (converted to PDF)	Images, text and Word (converted to PDF)
+	Images, text and Word	Images, text and Word
+
 # Tools and Home preferences: English until translated.
 	Tools and Home	Tools and Home
 	Show planned and provider tools	Show planned and provider tools

@@ -1030,6 +1030,10 @@ impl PdfCraftApp {
             if let Err(e) = self.begin_combine_paths(&request.files) {
                 self.notify(e);
             }
+        } else if request.convert_word {
+            if let Err(e) = self.convert_word_paths(&request.files) {
+                self.notify(e);
+            }
         } else {
             for f in &request.files {
                 self.open_path(f);
@@ -1041,7 +1045,9 @@ impl PdfCraftApp {
         #[cfg(not(target_arch = "wasm32"))]
         self.pick(
             pickers::PickFor::Open,
-            rfd::AsyncFileDialog::new().add_filter("PDF", &["pdf"]).add_filter(tl!("Images and text (converted to PDF)"), &create_ui::CONVERTIBLE),
+            rfd::AsyncFileDialog::new()
+                .add_filter("PDF", &["pdf"])
+                .add_filter(tl!("Images, text and Word (converted to PDF)"), &create_ui::CONVERTIBLE),
             false,
         );
         // Browsers pick files asynchronously; the bytes arrive through `inbox`.
@@ -1052,7 +1058,7 @@ impl PdfCraftApp {
             wasm_bindgen_futures::spawn_local(async move {
                 if let Some(h) = rfd::AsyncFileDialog::new()
                     .add_filter("PDF", &["pdf"])
-                    .add_filter(tl!("Images and text"), &create_ui::CONVERTIBLE)
+                    .add_filter(tl!("Images, text and Word"), &create_ui::CONVERTIBLE)
                     .pick_file()
                     .await
                 {

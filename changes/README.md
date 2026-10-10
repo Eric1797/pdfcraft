@@ -10,6 +10,7 @@ at a time later. Read the files in number order.
 | 2 | Combine grid view: drag cards to reorder | `02-combine-grid-drag-reorder.md` |
 | 3 | Hide unfinished tools, drop the Ready chip, Preferences opt-in | `03-hide-unfinished-tools.md` |
 | 4 | Home community card opt-in, recent files capped at 10 | `04-home-community-toggle-and-recent-cap.md` |
+| 5 | Convert Word (.docx) to PDF (tool, shell verb, engine) + CI clippy fix | `05-convert-word-to-pdf.md` |
 
 How to upstream one change at a time (example for change 3):
 

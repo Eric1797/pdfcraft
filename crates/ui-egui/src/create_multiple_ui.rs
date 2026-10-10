@@ -24,7 +24,7 @@ impl PdfCraftApp {
             }
         }
         if sources.is_empty() {
-            self.notify_tr("None of those files can be made into a PDF; use PDFs, images or .txt files");
+            self.notify_tr("None of those files can be made into a PDF; use PDFs, images, .txt files or Word (.docx) files");
             return;
         }
         let bytes = match self.session.combine_ranges(&sources) {

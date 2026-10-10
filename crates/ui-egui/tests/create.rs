@@ -215,3 +215,81 @@ fn multiple_files_that_cannot_be_converted_open_nothing() {
     assert!(app.views.is_empty());
     assert!(app.toast.is_some());
 }
+
+/// A minimal .docx package with stored (uncompressed) entries.
+fn stored_docx(parts: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut central = Vec::new();
+    for (name, data) in parts {
+        let off = out.len() as u32;
+        out.extend_from_slice(b"PK\x03\x04");
+        out.extend_from_slice(&20u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(name.as_bytes());
+        out.extend_from_slice(data);
+        central.extend_from_slice(b"PK\x01\x02");
+        central.extend_from_slice(&20u16.to_le_bytes());
+        central.extend_from_slice(&20u16.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u32.to_le_bytes());
+        central.extend_from_slice(&0u32.to_le_bytes());
+        central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        central.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u32.to_le_bytes());
+        central.extend_from_slice(&off.to_le_bytes());
+        central.extend_from_slice(name.as_bytes());
+    }
+    let cd_off = out.len() as u32;
+    out.extend_from_slice(&central);
+    out.extend_from_slice(b"PK\x05\x06");
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&(parts.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(parts.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(central.len() as u32).to_le_bytes());
+    out.extend_from_slice(&cd_off.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out
+}
+
+fn word_doc(text: &str) -> Vec<u8> {
+    let doc = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>"
+    );
+    stored_docx(&[("word/document.xml", doc.as_bytes())])
+}
+
+#[test]
+fn opening_word_documents_converts_them_to_new_pdfs() {
+    let mut app = PdfCraftApp::new();
+    app.open_bytes("report.docx", Some("/tmp/report.docx".into()), word_doc("Quarterly results")).unwrap();
+    let docs = app.session.docs();
+    assert_eq!(docs.len(), 1);
+    assert_eq!(docs[0].name, "report.pdf");
+    assert_eq!(docs[0].info.pages.len(), 1);
+    assert!(docs[0].path.is_none(), "a converted file has no PDF path yet: Save asks where");
+}
+
+#[test]
+fn multiple_word_files_combine_into_one_pdf() {
+    let mut app = PdfCraftApp::new();
+    app.use_files(pdfcraft_ui_egui::FilePurpose::CreateMultiple, vec![("a.docx".into(), word_doc("Alpha")), ("b.docx".into(), word_doc("Beta"))]);
+    assert_eq!(app.views.len(), 1);
+    let doc = app.session.get(app.views[0].id).unwrap();
+    assert_eq!(doc.name, "Combined.pdf");
+    assert_eq!(doc.info.pages.len(), 2);
+    assert_eq!(doc.info.outline.iter().map(|o| o.title.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+}

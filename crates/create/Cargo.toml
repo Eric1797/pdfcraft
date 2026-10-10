@@ -1,6 +1,6 @@
 [package]
 name = "pdfcraft-create"
-description = "Create PDFs: blank documents, from images (PNG, JPEG) and from plain text"
+description = "Create PDFs: blank documents, from images (PNG, JPEG), plain text and Word (.docx)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,7 +12,9 @@ workspace = true
 pdfcraft-cos = { workspace = true }
 pdfcraft-model = { workspace = true }
 pdfcraft-fonts = { workspace = true }
+flate2.workspace = true
 png = "0.18"
+quick-xml = { version = "0.41", default-features = false }
 tiff = "0.11"
 image = { version = "0.25", default-features = false, features = ["bmp", "gif"] }
 thiserror = { workspace = true }

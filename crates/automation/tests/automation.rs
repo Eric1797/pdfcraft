@@ -1557,7 +1557,7 @@ fn creating_from_multiple_files_through_tools() {
     assert!(dir.join("all.pdf").is_file());
     // A file that can't be converted fails the whole combine, naming it.
     let err = a.call("doc_create_multiple", &json!({ "paths": ["a.pdf", "report.docx"] })).unwrap_err();
-    assert!(matches!(&err, ToolError::Failed(m) if m.contains("report.docx") && m.contains("can't be converted")), "{err}");
+    assert!(matches!(&err, ToolError::Failed(m) if m.contains("report.docx")), "{err}");
     assert!(matches!(a.call("doc_create_multiple", &json!({ "paths": [] })), Err(ToolError::InvalidArgs(_))));
     assert!(matches!(a.call("doc_create_multiple", &json!({ "paths": ["a.pdf"], "mode": "zip" })), Err(ToolError::InvalidArgs(_))));
     assert!(matches!(a.call("doc_create_multiple", &json!({ "paths": ["a.pdf"], "mode": "separate" })), Err(ToolError::InvalidArgs(_))));
@@ -1570,7 +1570,7 @@ fn creating_from_multiple_files_through_tools() {
     let made = ok(&mut a, "doc_create_multiple", args);
     let files = made["files"].as_array().unwrap();
     assert!(files[0]["output"].as_str().unwrap().ends_with("notes (2).pdf"), "{files:?}");
-    assert!(files[1]["error"].as_str().unwrap().contains("can't be converted"));
+    assert!(files[1]["error"].as_str().unwrap().contains("report.docx"));
     assert_eq!(files[2]["skipped"], "already a PDF");
     assert!(files[3]["output"].as_str().unwrap().ends_with("scan.pdf"));
     assert!(files[4]["error"].is_string());
@@ -1578,6 +1578,91 @@ fn creating_from_multiple_files_through_tools() {
     let reopened = ok(&mut a, "doc_open", json!({ "path": "out/notes (2).pdf" }))["doc"].as_u64().unwrap();
     assert_eq!(page_text(&mut a, reopened), ["hello"]);
     assert!(!dir.join("out/a.pdf").exists());
+}
+
+/// A minimal .docx package with stored (uncompressed) entries.
+fn stored_docx(parts: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut central = Vec::new();
+    for (name, data) in parts {
+        let off = out.len() as u32;
+        out.extend_from_slice(b"PK\x03\x04");
+        out.extend_from_slice(&20u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(&((*name).len() as u16).to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(name.as_bytes());
+        out.extend_from_slice(data);
+        central.extend_from_slice(b"PK\x01\x02");
+        central.extend_from_slice(&20u16.to_le_bytes());
+        central.extend_from_slice(&20u16.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u32.to_le_bytes());
+        central.extend_from_slice(&0u32.to_le_bytes());
+        central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        central.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        central.extend_from_slice(&((*name).len() as u16).to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes());
+        central.extend_from_slice(&0u32.to_le_bytes());
+        central.extend_from_slice(&off.to_le_bytes());
+        central.extend_from_slice(name.as_bytes());
+    }
+    let cd_off = out.len() as u32;
+    out.extend_from_slice(&central);
+    out.extend_from_slice(b"PK\x05\x06");
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&(parts.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(parts.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(central.len() as u32).to_le_bytes());
+    out.extend_from_slice(&cd_off.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out
+}
+
+fn word_doc(text: &str) -> Vec<u8> {
+    let doc = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>"
+    );
+    stored_docx(&[("word/document.xml", doc.as_bytes())])
+}
+
+#[test]
+fn creating_from_word_files_through_tools() {
+    let dir = workdir("create-word");
+    std::fs::write(dir.join("a.docx"), word_doc("Alpha")).unwrap();
+    std::fs::write(dir.join("b.docx"), word_doc("Beta")).unwrap();
+    let mut a = auto(&dir);
+
+    // Combine: each Word file converted, in order, with a bookmark per file.
+    let made = ok(&mut a, "doc_create_multiple", json!({ "paths": ["a.docx", "b.docx"], "out": "ab.pdf", "open": true }));
+    let doc = made["document"]["doc"].as_u64().unwrap();
+    assert_eq!(page_text(&mut a, doc), ["Alpha", "Beta"]);
+    let titles: Vec<String> = ok(&mut a, "bookmark_list", json!({ "doc": doc }))["bookmarks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["title"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(titles, ["a", "b"]);
+    assert!(dir.join("ab.pdf").is_file());
+
+    // Separate: one PDF per Word file.
+    std::fs::create_dir_all(dir.join("out")).unwrap();
+    let made = ok(&mut a, "doc_create_multiple", json!({ "paths": ["a.docx"], "mode": "separate", "out_dir": "out" }));
+    let files = made["files"].as_array().unwrap();
+    assert!(files[0]["output"].as_str().unwrap().ends_with("a.pdf"), "{files:?}");
+    let reopened = ok(&mut a, "doc_open", json!({ "path": "out/a.pdf" }))["doc"].as_u64().unwrap();
+    assert_eq!(page_text(&mut a, reopened), ["Alpha"]);
 }
 
 #[test]

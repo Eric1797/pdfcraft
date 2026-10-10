@@ -1999,3 +1999,8 @@
 	Choose a PNG or JPEG image (up to 4 MiB). Transparency is preserved.	Elija una imagen PNG o JPEG (hasta 4 MiB). Se conserva la transparencia.
 	Couldn't import the signature image: {e}	No se pudo importar la imagen de la firma: {e}
 	Go to page…	Ir a la página…
+
+# Convert Word to PDF: English until translated.
+	Create PDF from Word…	Create PDF from Word…
+	Convert to PDF	Convert to PDF
+	Word document (.docx)	Word document (.docx)

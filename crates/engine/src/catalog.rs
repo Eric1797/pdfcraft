@@ -66,20 +66,23 @@ pub static TOOL_GROUPS: &[ToolGroup] = &[
         hue: BLUE,
         badge: None,
         availability: Ready,
-        sections: &[ToolSection {
-            title: "Export to",
-            items: &[
-                item("Microsoft Word (.docx)", "file-text", "export.docx", Ready),
-                item("Spreadsheet (.xlsx)", "grid-3x3", "export.xlsx", Planned("M10")),
-                item("Presentation (.pptx)", "presentation", "export.pptx", Planned("M10")),
-                item("Image (PNG)", "image", "export.image", Ready),
-                item("Export all images", "image", "export.all_images", Ready),
-                item("HTML web page", "file-symlink", "export.html", Ready),
-                item("Rich Text Format (.rtf)", "file-text", "export.rtf", Ready),
-                item("Text (plain)", "type", "export.text", Ready),
-                item("PostScript / EPS", "file-down", "export.ps", Planned("M10")),
-            ],
-        }],
+        sections: &[
+            ToolSection {
+                title: "Export to",
+                items: &[
+                    item("Microsoft Word (.docx)", "file-text", "export.docx", Ready),
+                    item("Spreadsheet (.xlsx)", "grid-3x3", "export.xlsx", Planned("M10")),
+                    item("Presentation (.pptx)", "presentation", "export.pptx", Planned("M10")),
+                    item("Image (PNG)", "image", "export.image", Ready),
+                    item("Export all images", "image", "export.all_images", Ready),
+                    item("HTML web page", "file-symlink", "export.html", Ready),
+                    item("Rich Text Format (.rtf)", "file-text", "export.rtf", Ready),
+                    item("Text (plain)", "type", "export.text", Ready),
+                    item("PostScript / EPS", "file-down", "export.ps", Planned("M10")),
+                ],
+            },
+            ToolSection { title: "Convert to PDF", items: &[item("Word document (.docx)", "file-text", "create.word", Ready)] },
+        ],
     },
     ToolGroup {
         id: "fill_sign",

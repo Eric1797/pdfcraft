@@ -121,6 +121,17 @@
         <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\PdfCraft.Combine" Value="Combine with PdfCraft…" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\PdfCraft.Combine" Name="MultiSelectModel" Value="Player" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.pdf\shell\PdfCraft.Combine\command" Value="&quot;[#PdfcraftExe]&quot; --combine &quot;%1&quot;" Type="string" />
+
+        <!-- Word context menu: convert Word documents to PDF without changing Word file
+             defaults. One file opens as a new PDF tab; several are converted and combined in
+             order into one PDF. Player model with the same single-instance handoff as the
+             Combine verb above, and owned by this component so uninstall removes it. -->
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.docx\shell\PdfCraft.WordToPdf" Value="Convert to PDF with PdfCraft…" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.docx\shell\PdfCraft.WordToPdf" Name="MultiSelectModel" Value="Player" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.docx\shell\PdfCraft.WordToPdf\command" Value="&quot;[#PdfcraftExe]&quot; --convert-word &quot;%1&quot;" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.docm\shell\PdfCraft.WordToPdf" Value="Convert to PDF with PdfCraft…" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.docm\shell\PdfCraft.WordToPdf" Name="MultiSelectModel" Value="Player" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\SystemFileAssociations\.docm\shell\PdfCraft.WordToPdf\command" Value="&quot;[#PdfcraftExe]&quot; --convert-word &quot;%1&quot;" Type="string" />
       </Component>
 
       <!-- Shortcuts (#143) are plain links to pdfcraft.exe, not advertised MSI shortcuts: advertised

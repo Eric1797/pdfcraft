@@ -29,7 +29,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 /// What a later launch asks the running instance to stage: the files in command-line order
-/// and which staging mode (`--combine`, `--create-images`, or plain opens).
+/// and which staging mode (`--combine`, `--create-images`, `--convert-word`, or plain opens).
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct HandoffRequest {
@@ -42,13 +42,16 @@ pub struct HandoffRequest {
     /// Stage them in the image-import chooser.
     #[serde(default)]
     pub create_images: bool,
+    /// Convert the Word documents (one opens as a tab, several combine into one PDF).
+    #[serde(default)]
+    pub convert_word: bool,
 }
 
 impl HandoffRequest {
     /// A bare launch (no files, no staging flag) opens its own window as before; only a
     /// launch carrying something is worth forwarding.
     pub fn carries_files(&self) -> bool {
-        !self.files.is_empty() || self.combine || self.create_images
+        !self.files.is_empty() || self.combine || self.create_images || self.convert_word
     }
 }
 
@@ -358,7 +361,7 @@ mod tests {
     }
 
     fn request(files: &[&str], combine: bool) -> HandoffRequest {
-        HandoffRequest { files: files.iter().map(|s| s.to_string()).collect(), combine, create_images: false }
+        HandoffRequest { files: files.iter().map(|s| s.to_string()).collect(), combine, create_images: false, convert_word: false }
     }
 
     /// Poll a primary on a worker thread until `want` requests arrived: a forward only
@@ -414,7 +417,7 @@ mod tests {
             handles.push(std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(i * 13));
                 let name = format!("f{i}.pdf");
-                let req = HandoffRequest { files: vec![name], combine: true, create_images: false };
+                let req = HandoffRequest { files: vec![name], combine: true, create_images: false, convert_word: false };
                 match claim(&dir, &req) {
                     Claim::Forwarded => "forwarded".to_string(),
                     Claim::Primary(Some(mut primary)) => {
@@ -502,9 +505,9 @@ mod tests {
     fn absurd_requests_are_rejected() {
         assert!(parse(b"{\"files\":[],\"combine\":false,\"create_images\":false}").is_some());
         assert!(parse(b"nope").is_none());
-        let many = HandoffRequest { files: vec!["a.pdf".to_string(); MAX_FILES + 1], combine: false, create_images: false };
+        let many = HandoffRequest { files: vec!["a.pdf".to_string(); MAX_FILES + 1], combine: false, create_images: false, convert_word: false };
         assert!(parse(&serde_json::to_vec(&many).unwrap()).is_none(), "too many files");
-        let long = HandoffRequest { files: vec!["x".repeat(MAX_PATH_CHARS + 1)], combine: false, create_images: false };
+        let long = HandoffRequest { files: vec!["x".repeat(MAX_PATH_CHARS + 1)], combine: false, create_images: false, convert_word: false };
         assert!(parse(&serde_json::to_vec(&long).unwrap()).is_none(), "too long a path");
     }
 

@@ -6710,6 +6710,18 @@ evidence = ["crates/create/src/tests.rs::text_is_wrapped_and_paginated", "crates
 notes = "Helvetica 11 pt on US Letter; form feeds start pages"
 
 [[feature]]
+id = "create.from-word"
+title = "Create PDF from Word documents (.docx)"
+area = "J"
+tier = "P0"
+milestone = "M10"
+status = "shipped"
+commands = ["create.word"]
+tools = ["doc_create_multiple"]
+evidence = ["crates/create/src/office.rs::headings_bold_and_text_convert", "crates/automation/tests/automation.rs::creating_from_word_files_through_tools", "crates/ui-egui/tests/create.rs::opening_word_documents_converts_them_to_new_pdfs"]
+notes = "Paragraphs, headings, bullets and numbered lists, simple tables and inline images in the Helvetica family; one file opens as a tab, several combine in order (Convert ▸ Word, --convert-word, Explorer context menu); headers, footers, notes, shapes, charts and equations are left out"
+
+[[feature]]
 id = "create.from-markdown"
 title = "Create PDF from Markdown"
 area = "J"
