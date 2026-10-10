@@ -390,6 +390,7 @@ fn parse_numbering(xml: &[u8]) -> Numbering {
     let mut current_level: Option<u32> = None;
     let mut current_fmt: Option<String> = None;
     while let Ok(Some(e)) = xml.next() {
+        let start = matches!(e, quick_xml::events::Event::Start(_));
         match e {
             quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => match local(e.name().0) {
                 b"abstractNum" => {
@@ -407,10 +408,26 @@ fn parse_numbering(xml: &[u8]) -> Numbering {
                     }
                 }
                 b"num" => {
-                    if let (Some(id), Some(ab)) =
-                        (attr(&e, b"numId").and_then(|v| v.parse::<u32>().ok()), attr(&e, b"abstractNumId").and_then(|v| v.parse::<u32>().ok()))
-                    {
-                        nums.push((id, ab));
+                    // `<w:num>` carries `numId` as an attribute and `abstractNumId`
+                    // as a child element.
+                    if start {
+                        if let Some(id) = attr(&e, b"numId").and_then(|v| v.parse::<u32>().ok()) {
+                            let mut ab = None;
+                            while let Ok(Some(e)) = xml.next() {
+                                match e {
+                                    quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) => {
+                                        if local(e.name().0) == b"abstractNumId" {
+                                            ab = attr(&e, b"val").and_then(|v| v.parse::<u32>().ok());
+                                        }
+                                    }
+                                    quick_xml::events::Event::End(end) if local(end.name().0) == b"num" => break,
+                                    _ => {}
+                                }
+                            }
+                            if let Some(ab) = ab {
+                                nums.push((id, ab));
+                            }
+                        }
                     }
                 }
                 _ => {}
@@ -572,6 +589,13 @@ impl<'a> Parser<'a> {
                     let bytes = t.into_inner();
                     let s = std::str::from_utf8(&bytes).map_err(|_| bad(name, "the Word document is not valid text"))?;
                     out.push_str(&unescape(s));
+                }
+                // Character references (`&amp;`, `&#65;`, …) arrive apart from text.
+                quick_xml::events::Event::GeneralRef(e) => {
+                    let bytes = e.into_inner();
+                    if let Ok(s) = std::str::from_utf8(&bytes) {
+                        out.push_str(&unescape(&format!("&{s};")));
+                    }
                 }
                 quick_xml::events::Event::End(end) if local(end.name().0) == b"t" => break,
                 quick_xml::events::Event::Start(_) => self.skip()?,
@@ -1776,10 +1800,13 @@ mod tests {
             .iter()
             .map(|k| {
                 let page = doc.resolve(k).as_dict().cloned().unwrap();
-                let c = doc.resolve(page.get(b"Contents").unwrap());
-                match &*c {
-                    Object::Stream(s) => s.decoded().unwrap(),
-                    _ => panic!("page without content"),
+                match page.get(b"Contents").map(|c| doc.resolve(c)) {
+                    Some(c) => match &*c {
+                        Object::Stream(s) => s.decoded().unwrap(),
+                        _ => panic!("page without content"),
+                    },
+                    // An empty page (an empty paragraph) has no content stream.
+                    None => Vec::new(),
                 }
             })
             .collect();
