@@ -8,7 +8,7 @@
 </p>
 
 
-<h1 align="center">PdfCraft</h1>
+<h1 align="center">PdfCraft |Modded|</h1>
 
 <p align="center">
   <b>The PDF workbench; an open-source, clean-room reimplementation of Adobe Acrobat, rebuilt in pure Rust.</b><br>
@@ -38,7 +38,7 @@
 <p align="center">
   <img src="docs/images/pdfcraft-viewer.png" alt="PdfCraft with the PdfCraft Showcase cover page open, the All tools panel on the left and 20 threaded comments on the right" width="100%">
   <br>
-  <sub>The PdfCraft Showcase, a 13-page specimen PDF, open with the All tools panel and threaded comments.</sub>
+  <sub>The PdfCraft Showcase, home screen of the software in dark mode, with refined title bar tab management and printing support in windows.</sub>
 </p>
 
 > [!NOTE]
